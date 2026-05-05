@@ -1,0 +1,591 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model TeamMember {
+  id        Int      @id @default(autoincrement())
+  name      String
+  role      String
+  color     String?
+  status    String   @default("offline")
+  tz        String?
+  city      String?
+  utcOffset Float?
+  email     String   @unique
+  leads     Lead[]   @relation("LeadOwner")
+  customers Customer[] @relation("CustomerOwner")
+  hubProjects HubProject[] @relation("HubProjectOwner")
+  tickets   Ticket[]   @relation("TicketAssignee")
+  meetings  Meeting[]  @relation("MeetingHost")
+  user      AppUser?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("team_members")
+}
+
+model AppUser {
+  id             Int             @id @default(autoincrement())
+  teamMemberId   Int?            @unique
+  teamMember     TeamMember?     @relation(fields: [teamMemberId], references: [id])
+  email          String          @unique
+  passwordHash   String
+  name           String
+  role           String          @default("viewer")
+  department     String?
+  status         String          @default("pending")
+  permissions    String[]
+  lastLogin      DateTime?
+  diagnosticRuns DiagnosticRun[] @relation("DiagnosticRunStartedBy")
+  createdAt      DateTime        @default(now())
+
+  @@map("app_users")
+}
+
+model Lead {
+  id                  Int              @id @default(autoincrement())
+  company             String
+  contact             String
+  title               String?
+  stage               String
+  value               Int              @default(0)
+  probability         Int              @default(0)
+  modules             String[]
+  certifications      String[]
+  facilities          Int              @default(1)
+  ownerId             Int
+  owner               TeamMember       @relation("LeadOwner", fields: [ownerId], references: [id])
+  priority            String           @default("medium")
+  lastActivity        DateTime?
+  nextAction          String?
+  source              String?
+  notes               String?
+  industry            String?
+  email               String?
+  phone               String?
+  convertedToCustomer Boolean          @default(false)
+  attachments         Json             @default("[]")
+  expansions          DealExpansion[]
+  customer            Customer?
+  activities          Activity[]       @relation("LeadActivities")
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@map("leads")
+}
+
+model DealExpansion {
+  id      Int      @id @default(autoincrement())
+  leadId  Int
+  lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  modules String[]
+  value   Int
+  date    DateTime
+
+  @@map("deal_expansions")
+}
+
+model Customer {
+  id             Int           @id @default(autoincrement())
+  leadId         Int           @unique
+  lead           Lead          @relation(fields: [leadId], references: [id])
+  company        String
+  contact        String?
+  title          String?
+  email          String?
+  phone          String?
+  industry       String?
+  modules        String[]
+  certifications String[]
+  facilities     Int           @default(1)
+  ownerId        Int
+  owner          TeamMember    @relation("CustomerOwner", fields: [ownerId], references: [id])
+  contractValue  Int           @default(0)
+  contractStart  DateTime?
+  contractEnd    DateTime?
+  status         String        @default("onboarding")
+  billingStatus  String        @default("pending")
+  zohoCustomerId String?
+  notes          String?
+  portalApiKey   String?       @unique
+  invoices       ZohoInvoice[]
+  tickets        Ticket[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("customers")
+}
+
+model ZohoInvoice {
+  id            String   @id
+  customerId    Int
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceNumber String?
+  date          DateTime
+  dueDate       DateTime
+  amount        Int
+  status        String   @default("draft")
+  zohoUrl       String?
+
+  @@map("zoho_invoices")
+}
+
+model Activity {
+  id           Int         @id @default(autoincrement())
+  who          String
+  action       String?
+  target       String?
+  detail       String?
+  type         String?
+  leadId       Int?
+  lead         Lead?       @relation("LeadActivities", fields: [leadId], references: [id], onDelete: SetNull)
+  hubProjectId Int?
+  hubProject   HubProject? @relation("HubProjectActivities", fields: [hubProjectId], references: [id], onDelete: SetNull)
+  dueDate      DateTime?
+  completed    Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+
+  @@map("activities")
+}
+
+model Message {
+  id          Int      @id @default(autoincrement())
+  fromUser    String
+  toUser      String
+  text        String
+  read        Boolean  @default(false)
+  contextType String?
+  contextId   Int?
+  contextName String?
+  createdAt   DateTime @default(now())
+
+  @@map("messages")
+}
+
+model CalendarEvent {
+  id          Int      @id @default(autoincrement())
+  title       String
+  date        DateTime
+  time        String?
+  type        String?
+  description String?
+  relatedType String?
+  relatedId   Int?
+  relatedName String?
+  assignee    String?
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("calendar_events")
+}
+
+model KBDocument {
+  id          Int      @id @default(autoincrement())
+  title       String
+  type        String?
+  category    String?
+  author      String?
+  description String?
+  content     String?
+  fileName    String?
+  fileSize    Int?
+  fileType    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("kb_documents")
+}
+
+model DemoRequest {
+  id                Int      @id @default(autoincrement())
+  fullName          String
+  email             String?
+  position          String?
+  companyName       String?
+  businessType      String?
+  industry          String?
+  preferredTime     String?
+  preferredDate     DateTime?
+  selectedModules   Json
+  demoFocus         String?
+  status            String   @default("new")
+  assignedTo        String?
+  convertedToLeadId Int?
+  notes             String?
+  submittedAt       DateTime @default(now())
+
+  @@map("demo_requests")
+}
+
+model ContentPiece {
+  id            Int      @id @default(autoincrement())
+  title         String
+  description   String?
+  stage         String?
+  type          String?
+  platforms     String[]
+  owner         String?
+  createdBy     String?
+  scheduledDate DateTime?
+  publishedDate DateTime?
+  blockers      String[]
+  tags          String[]
+  notes         String?
+  attachments   String[]
+  linkedLeads   Int[]
+  body          String?
+  imageUrl      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("content_pieces")
+}
+
+model EmailCampaign {
+  id             Int       @id @default(autoincrement())
+  name           String
+  fromName       String?
+  fromEmail      String?
+  subject        String?
+  contentPieceId Int?
+  status         String    @default("Draft")
+  audience       Json?
+  scheduledDate  DateTime?
+  sentDate       DateTime?
+  recipients     Int       @default(0)
+  opens          Int       @default(0)
+  clicks         Int       @default(0)
+  bodyHtml       String?
+  imageFileName  String?
+  imageDataUrl   String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  recipientsList CampaignRecipient[]
+
+  @@map("email_campaigns")
+}
+
+model MESConfig {
+  id         Int      @id @default(autoincrement())
+  configType String
+  configKey  String
+  configData Json
+  active     Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([configType, configKey])
+  @@map("mes_config")
+}
+
+model IntakeSubmission {
+  id               Int      @id @default(autoincrement())
+  submittedAt      DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  status           String   @default("submitted")
+  interviewedBy    String?
+  leadId           Int?
+  companyName      String
+  industry         String?
+  facilities       Int      @default(1)
+  employees        Int      @default(0)
+  contactName      String?
+  contactTitle     String?
+  contactEmail     String?
+  contactPhone     String?
+  certifications   String[]
+  gfsiBenchmarked  String?
+  lastAuditDate    String?
+  biggestChallenge String?
+  modulesOfInterest String[]
+  timeline         String?
+  source           String?
+  notes            String?
+
+  @@map("intake_submissions")
+}
+
+model MESInterview {
+  id          Int      @id @default(autoincrement())
+  companyName String
+  contactName String?
+  contactEmail String?
+  module      String?
+  responses   Json
+  submittedBy String?
+  leadId      Int?
+  status      String   @default("completed")
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("mes_interviews")
+}
+
+model TradeShowScan {
+  id        Int      @id @default(autoincrement())
+  rawData   String
+  parsedData Json?
+  source     String?
+  scannedBy  String?
+  leadId     Int?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@map("trade_show_scans")
+}
+
+model CampaignRecipient {
+  id         Int       @id @default(autoincrement())
+  campaignId Int
+  campaign   EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId     Int?
+  email      String
+  status     String    @default("sent")
+  sentAt     DateTime  @default(now())
+  openedAt   DateTime?
+  error      String?
+  remindedAt DateTime?
+
+  @@map("campaign_recipients")
+}
+
+model EmailTemplate {
+  id           String  @id
+  name         String?
+  description  String?
+  previewColor String?
+  htmlTemplate String?
+  hasCta       Boolean @default(false)
+  hasImage     Boolean @default(false)
+
+  @@map("email_templates")
+}
+
+model Ticket {
+  id              Int          @id @default(autoincrement())
+  ticketNumber    String       @unique
+  level           Int          @default(1)
+  status          String       @default("open")
+  module          String
+  category        String
+  subject         String
+  description     String
+  customerId      Int?
+  customer        Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerCompany String
+  contactName     String?
+  contactTitle    String?
+  contactEmail    String?
+  contactPhone    String?
+  assignedToId    Int?
+  assignedTo      TeamMember?  @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assigneeQueue   String?
+  source          String       @default("internal")
+  priority        String       @default("normal")
+  severity        String       @default("medium")
+  aiResolved      Boolean      @default(false)
+  attachments     Json         @default("[]")
+  resolvedAt      DateTime?
+  notes           TicketNote[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([status, level])
+  @@index([customerId])
+  @@map("tickets")
+}
+
+model TicketNote {
+  id         Int      @id @default(autoincrement())
+  ticketId   Int
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  visibility String   @default("internal")
+  author     String
+  content    String
+  emailSent  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@map("ticket_notes")
+}
+
+model HubProject {
+  id            Int          @id @default(autoincrement())
+  name          String
+  description   String?
+  type          String       @default("general")
+  status        String       @default("planning")
+  currentPhase  String       @default("M")
+  ownerId       Int?
+  owner         TeamMember?  @relation("HubProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  ownerLabel    String?
+  startDate     DateTime?
+  targetDate    DateTime?
+  tasks         HubTask[]
+  activities    Activity[]   @relation("HubProjectActivities")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([status])
+  @@index([currentPhase])
+  @@map("hub_projects")
+}
+
+model HubTask {
+  id            Int          @id @default(autoincrement())
+  projectId     Int
+  project       HubProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  phase         String       @default("M")
+  status        String       @default("todo")
+  responsible   String
+  accountable   String
+  informed      String?
+  startDate     DateTime?
+  dueDate       DateTime?
+  sortOrder     Int          @default(0)
+  subtasks      HubSubtask[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([projectId, phase])
+  @@map("hub_tasks")
+}
+
+model HubSubtask {
+  id        Int      @id @default(autoincrement())
+  taskId    Int
+  task      HubTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title     String
+  assignee  String
+  dueDate   DateTime?
+  status    String   @default("todo")
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+  @@map("hub_subtasks")
+}
+
+model Meeting {
+  id            Int                   @id @default(autoincrement())
+  title         String
+  date          DateTime              @default(now())
+  status        String                @default("live")
+  summary       String?
+  discussion    String?
+  transcript    String?
+  attendees     String[]
+  attendeeIds   Int[]
+  agenda        String[]
+  hostId        Int?
+  host          TeamMember?           @relation("MeetingHost", fields: [hostId], references: [id], onDelete: SetNull)
+  imported      Boolean               @default(false)
+  actionItems   MeetingActionItem[]
+  followUps     MeetingFollowUp[]
+  files         MeetingFile[]
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([status])
+  @@index([date])
+  @@map("meetings")
+}
+
+model MeetingActionItem {
+  id        Int      @id @default(autoincrement())
+  meetingId Int
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  task      String
+  owner     String?
+  dueDate   String?
+  done      Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([meetingId])
+  @@map("meeting_action_items")
+}
+
+model MeetingFollowUp {
+  id        Int      @id @default(autoincrement())
+  meetingId Int
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  task      String
+  context   String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([meetingId])
+  @@map("meeting_followups")
+}
+
+model MeetingFile {
+  id          Int      @id @default(autoincrement())
+  meetingId   Int
+  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  name        String
+  kind        String                                     // "embedded" | "linked"
+  url         String?                                    // external URL for linked
+  s3Key       String?                                    // S3 key for embedded
+  fileSize    Int?
+  fileType    String?
+  uploadedBy  String?
+  uploadedAt  DateTime @default(now())
+
+  @@index([meetingId])
+  @@map("meeting_files")
+}
+
+model DiagnosticRun {
+  id          Int      @id @default(autoincrement())
+  scope       String                                 // "platform" | "module:db" | "suite:db-conn"
+  startedById Int?
+  startedBy   AppUser? @relation("DiagnosticRunStartedBy", fields: [startedById], references: [id], onDelete: SetNull)
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  durationMs  Int?
+  totalChecks Int      @default(0)
+  passCount   Int      @default(0)
+  warnCount   Int      @default(0)
+  failCount   Int      @default(0)
+  healthScore Int      @default(0)
+  results     Json     @default("{}")             // { "<suite-id>-<check-idx>": "pass" | "warn" | "fail" }
+  findings    Json     @default("{}")             // { "<suite-id>": <ai-finding-object> }
+
+  @@index([startedAt])
+  @@index([scope])
+  @@map("diagnostic_runs")
+}
+
+model SidebarConfig {
+  id        Int      @id @default(autoincrement())
+  layout    Json     @default("[]")             // Full sidebar tree as JSON
+  updatedById Int?
+  updatedAt DateTime @updatedAt
+
+  @@map("sidebar_config")
+}
+
+model TicketingSettings {
+  id                    Int     @id @default(autoincrement())
+  supportEmail          String  @default("support@cat-i.ai")
+  autoReplyEnabled      Boolean @default(true)
+  autoReplyTemplate     String  @default("Thank you for contacting CAT-I.AI Support. Your ticket {{TICKET_ID}} has been created and assigned to {{ASSIGNEE}}. Expected response time: {{SLA}}.\n\nWe'll keep you updated on progress. If this is urgent, please call our support line directly.\n\n— CAT-I.AI Support Team")
+  statusChangeTemplate  String  @default("Your ticket {{TICKET_ID}} status has been updated to: {{STATUS}}.\n\n{{MESSAGE}}\n\nThank you,\nCAT-I.AI Support Team")
+  escalationTemplate    String  @default("Your ticket {{TICKET_ID}} has been escalated to {{LEVEL}} for priority handling. A specialist has been assigned and will reach out shortly.\n\nNew SLA: {{SLA}}\n\n— CAT-I.AI Support Team")
+  completionTemplate    String  @default("Your ticket {{TICKET_ID}} has been resolved.\n\nResolution: {{RESOLUTION}}\n\nIf you have any further questions, please don't hesitate to reach out. We're here to help.\n\n— CAT-I.AI Support Team")
+  escalationRules       Json    @default("[]")
+  updatedAt             DateTime @updatedAt
+
+  @@map("ticketing_settings")
+}

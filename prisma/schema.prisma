@@ -1,0 +1,349 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model TeamMember {
+  id        Int      @id @default(autoincrement())
+  name      String
+  role      String
+  color     String?
+  status    String   @default("offline")
+  tz        String?
+  city      String?
+  utcOffset Float?
+  email     String   @unique
+  leads     Lead[]   @relation("LeadOwner")
+  customers Customer[] @relation("CustomerOwner")
+  projects  Project[] @relation("ProjectOwner")
+  user      AppUser?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("team_members")
+}
+
+model AppUser {
+  id           Int         @id @default(autoincrement())
+  teamMemberId Int?        @unique
+  teamMember   TeamMember? @relation(fields: [teamMemberId], references: [id])
+  email        String      @unique
+  passwordHash String
+  name         String
+  role         String      @default("viewer")
+  department   String?
+  status       String      @default("pending")
+  permissions  String[]
+  lastLogin    DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@map("app_users")
+}
+
+model Lead {
+  id                  Int              @id @default(autoincrement())
+  company             String
+  contact             String
+  title               String?
+  stage               String
+  value               Int              @default(0)
+  probability         Int              @default(0)
+  modules             String[]
+  certifications      String[]
+  facilities          Int              @default(1)
+  ownerId             Int
+  owner               TeamMember       @relation("LeadOwner", fields: [ownerId], references: [id])
+  priority            String           @default("medium")
+  lastActivity        DateTime?
+  nextAction          String?
+  source              String?
+  notes               String?
+  industry            String?
+  email               String?
+  phone               String?
+  convertedToCustomer Boolean          @default(false)
+  expansions          DealExpansion[]
+  customer            Customer?
+  activities          Activity[]       @relation("LeadActivities")
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@map("leads")
+}
+
+model DealExpansion {
+  id      Int      @id @default(autoincrement())
+  leadId  Int
+  lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  modules String[]
+  value   Int
+  date    DateTime
+
+  @@map("deal_expansions")
+}
+
+model Customer {
+  id             Int           @id @default(autoincrement())
+  leadId         Int           @unique
+  lead           Lead          @relation(fields: [leadId], references: [id])
+  company        String
+  contact        String?
+  title          String?
+  email          String?
+  phone          String?
+  industry       String?
+  modules        String[]
+  certifications String[]
+  facilities     Int           @default(1)
+  ownerId        Int
+  owner          TeamMember    @relation("CustomerOwner", fields: [ownerId], references: [id])
+  contractValue  Int           @default(0)
+  contractStart  DateTime?
+  contractEnd    DateTime?
+  status         String        @default("onboarding")
+  billingStatus  String        @default("pending")
+  zohoCustomerId String?
+  notes          String?
+  invoices       ZohoInvoice[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("customers")
+}
+
+model ZohoInvoice {
+  id            String   @id
+  customerId    Int
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceNumber String?
+  date          DateTime
+  dueDate       DateTime
+  amount        Int
+  status        String   @default("draft")
+  zohoUrl       String?
+
+  @@map("zoho_invoices")
+}
+
+model Project {
+  id         Int           @id @default(autoincrement())
+  name       String
+  status     String        @default("Not Started")
+  ownerId    Int
+  owner      TeamMember    @relation("ProjectOwner", fields: [ownerId], references: [id])
+  due        DateTime?
+  progress   Int           @default(0)
+  type       String?
+  tasks      ProjectTask[]
+  activities Activity[]    @relation("ProjectActivities")
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@map("projects")
+}
+
+model ProjectTask {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text      String
+  done      Boolean  @default(false)
+  dueDate   DateTime?
+  sortOrder Int      @default(0)
+
+  @@map("project_tasks")
+}
+
+model Activity {
+  id        Int      @id @default(autoincrement())
+  who       String
+  action    String?
+  target    String?
+  detail    String?
+  type      String?
+  leadId    Int?
+  lead      Lead?    @relation("LeadActivities", fields: [leadId], references: [id], onDelete: SetNull)
+  projectId Int?
+  project   Project? @relation("ProjectActivities", fields: [projectId], references: [id], onDelete: SetNull)
+  dueDate   DateTime?
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("activities")
+}
+
+model Message {
+  id          Int      @id @default(autoincrement())
+  fromUser    String
+  toUser      String
+  text        String
+  read        Boolean  @default(false)
+  contextType String?
+  contextId   Int?
+  contextName String?
+  createdAt   DateTime @default(now())
+
+  @@map("messages")
+}
+
+model CalendarEvent {
+  id          Int      @id @default(autoincrement())
+  title       String
+  date        DateTime
+  time        String?
+  type        String?
+  description String?
+  relatedType String?
+  relatedId   Int?
+  relatedName String?
+  assignee    String?
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("calendar_events")
+}
+
+model KBDocument {
+  id          Int      @id @default(autoincrement())
+  title       String
+  type        String?
+  category    String?
+  author      String?
+  description String?
+  content     String?
+  fileName    String?
+  fileSize    Int?
+  fileType    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("kb_documents")
+}
+
+model DemoRequest {
+  id                Int      @id @default(autoincrement())
+  fullName          String
+  email             String?
+  position          String?
+  companyName       String?
+  businessType      String?
+  industry          String?
+  preferredTime     String?
+  preferredDate     DateTime?
+  selectedModules   Json
+  demoFocus         String?
+  status            String   @default("new")
+  assignedTo        String?
+  convertedToLeadId Int?
+  notes             String?
+  submittedAt       DateTime @default(now())
+
+  @@map("demo_requests")
+}
+
+model ContentPiece {
+  id            Int      @id @default(autoincrement())
+  title         String
+  description   String?
+  stage         String?
+  type          String?
+  platforms     String[]
+  owner         String?
+  createdBy     String?
+  scheduledDate DateTime?
+  publishedDate DateTime?
+  blockers      String[]
+  tags          String[]
+  notes         String?
+  attachments   String[]
+  linkedLeads   Int[]
+  body          String?
+  imageUrl      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("content_pieces")
+}
+
+model EmailCampaign {
+  id             Int       @id @default(autoincrement())
+  name           String
+  fromName       String?
+  fromEmail      String?
+  subject        String?
+  contentPieceId Int?
+  status         String    @default("Draft")
+  audience       Json?
+  scheduledDate  DateTime?
+  sentDate       DateTime?
+  recipients     Int       @default(0)
+  opens          Int       @default(0)
+  clicks         Int       @default(0)
+  bodyHtml       String?
+  imageFileName  String?
+  imageDataUrl   String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("email_campaigns")
+}
+
+model MESConfig {
+  id         Int      @id @default(autoincrement())
+  configType String
+  configKey  String
+  configData Json
+  active     Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([configType, configKey])
+  @@map("mes_config")
+}
+
+model MESInterview {
+  id          Int      @id @default(autoincrement())
+  companyName String
+  contactName String?
+  contactEmail String?
+  module      String?
+  responses   Json
+  submittedBy String?
+  leadId      Int?
+  status      String   @default("completed")
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("mes_interviews")
+}
+
+model TradeShowScan {
+  id        Int      @id @default(autoincrement())
+  rawData   String
+  parsedData Json?
+  source     String?
+  scannedBy  String?
+  leadId     Int?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@map("trade_show_scans")
+}
+
+model EmailTemplate {
+  id           String  @id
+  name         String?
+  description  String?
+  previewColor String?
+  htmlTemplate String?
+  hasCta       Boolean @default(false)
+  hasImage     Boolean @default(false)
+
+  @@map("email_templates")
+}

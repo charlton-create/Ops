@@ -1,0 +1,8 @@
+node_modules
+.next
+.git
+.env
+.env.*
+angular-legacy
+CAT-I-OPS_Implementation_Plan.pdf
+.vercel
