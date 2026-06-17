@@ -1,0 +1,709 @@
+{
+  "site": "PLANT-01",
+  "source": "MES",
+  "generated": "2026-06-06T06:00:00Z",
+  "dataset": "bottling",
+  "count": 70,
+  "data": [
+    {
+      "date": "2026-05-18",
+      "line": "Line 1",
+      "good_units": 3926,
+      "total_units": 3972,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-18",
+      "line": "Line 2",
+      "good_units": 3962,
+      "total_units": 4014,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-18",
+      "line": "Line 3",
+      "good_units": 4072,
+      "total_units": 4123,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-18",
+      "line": "Line 4",
+      "good_units": 4119,
+      "total_units": 4161,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 53,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-19",
+      "line": "Line 1",
+      "good_units": 4051,
+      "total_units": 4088,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 35,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-19",
+      "line": "Line 2",
+      "good_units": 4035,
+      "total_units": 4083,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-19",
+      "line": "Line 3",
+      "good_units": 4070,
+      "total_units": 4123,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-19",
+      "line": "Line 4",
+      "good_units": 4038,
+      "total_units": 4089,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 62,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-20",
+      "line": "Line 1",
+      "good_units": 4219,
+      "total_units": 4268,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 24,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-20",
+      "line": "Line 2",
+      "good_units": 4216,
+      "total_units": 4255,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 35,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-20",
+      "line": "Line 3",
+      "good_units": 4197,
+      "total_units": 4247,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-20",
+      "line": "Line 4",
+      "good_units": 4087,
+      "total_units": 4141,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 64,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-21",
+      "line": "Line 1",
+      "good_units": 4381,
+      "total_units": 4438,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 18,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-21",
+      "line": "Line 2",
+      "good_units": 4426,
+      "total_units": 4477,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 24,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-21",
+      "line": "Line 3",
+      "good_units": 4420,
+      "total_units": 4461,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 35,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-21",
+      "line": "Line 4",
+      "good_units": 4251,
+      "total_units": 4301,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 59,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-22",
+      "line": "Line 1",
+      "good_units": 4480,
+      "total_units": 4537,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 20,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-22",
+      "line": "Line 2",
+      "good_units": 4601,
+      "total_units": 4661,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 18,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-22",
+      "line": "Line 3",
+      "good_units": 4646,
+      "total_units": 4700,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 24,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-22",
+      "line": "Line 4",
+      "good_units": 4486,
+      "total_units": 4527,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 49,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-23",
+      "line": "Line 1",
+      "good_units": 4503,
+      "total_units": 4551,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-23",
+      "line": "Line 2",
+      "good_units": 4682,
+      "total_units": 4741,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 20,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-24",
+      "line": "Line 1",
+      "good_units": 4441,
+      "total_units": 4487,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-24",
+      "line": "Line 2",
+      "good_units": 4660,
+      "total_units": 4709,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-25",
+      "line": "Line 1",
+      "good_units": 4333,
+      "total_units": 4387,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-25",
+      "line": "Line 2",
+      "good_units": 4538,
+      "total_units": 4585,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-25",
+      "line": "Line 3",
+      "good_units": 4759,
+      "total_units": 4809,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-25",
+      "line": "Line 4",
+      "good_units": 4784,
+      "total_units": 4845,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 34,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-26",
+      "line": "Line 1",
+      "good_units": 4253,
+      "total_units": 4309,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-26",
+      "line": "Line 2",
+      "good_units": 4373,
+      "total_units": 4428,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-26",
+      "line": "Line 3",
+      "good_units": 4578,
+      "total_units": 4626,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-26",
+      "line": "Line 4",
+      "good_units": 4644,
+      "total_units": 4693,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 42,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-27",
+      "line": "Line 1",
+      "good_units": 4215,
+      "total_units": 4265,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-27",
+      "line": "Line 2",
+      "good_units": 4253,
+      "total_units": 4309,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-27",
+      "line": "Line 3",
+      "good_units": 4371,
+      "total_units": 4426,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-27",
+      "line": "Line 4",
+      "good_units": 4421,
+      "total_units": 4467,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 53,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-28",
+      "line": "Line 1",
+      "good_units": 4223,
+      "total_units": 4262,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 34,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-28",
+      "line": "Line 2",
+      "good_units": 4197,
+      "total_units": 4246,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-28",
+      "line": "Line 3",
+      "good_units": 4232,
+      "total_units": 4288,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-28",
+      "line": "Line 4",
+      "good_units": 4200,
+      "total_units": 4253,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 62,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-29",
+      "line": "Line 1",
+      "good_units": 4207,
+      "total_units": 4256,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 24,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-29",
+      "line": "Line 2",
+      "good_units": 4213,
+      "total_units": 4252,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 34,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-05-29",
+      "line": "Line 3",
+      "good_units": 4186,
+      "total_units": 4235,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 45,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-05-29",
+      "line": "Line 4",
+      "good_units": 4076,
+      "total_units": 4129,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 64,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-05-30",
+      "line": "Line 1",
+      "good_units": 4190,
+      "total_units": 4245,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 18,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-05-30",
+      "line": "Line 2",
+      "good_units": 4234,
+      "total_units": 4283,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 24,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-05-31",
+      "line": "Line 1",
+      "good_units": 4160,
+      "total_units": 4213,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 20,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-05-31",
+      "line": "Line 2",
+      "good_units": 4273,
+      "total_units": 4329,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 18,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-06-01",
+      "line": "Line 1",
+      "good_units": 4138,
+      "total_units": 4181,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-06-01",
+      "line": "Line 2",
+      "good_units": 4302,
+      "total_units": 4356,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 20,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-06-01",
+      "line": "Line 3",
+      "good_units": 4415,
+      "total_units": 4473,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 18,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-06-01",
+      "line": "Line 4",
+      "good_units": 4313,
+      "total_units": 4363,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 38,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-06-02",
+      "line": "Line 1",
+      "good_units": 4121,
+      "total_units": 4164,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-06-02",
+      "line": "Line 2",
+      "good_units": 4325,
+      "total_units": 4370,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-06-02",
+      "line": "Line 3",
+      "good_units": 4493,
+      "total_units": 4550,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 20,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-06-02",
+      "line": "Line 4",
+      "good_units": 4464,
+      "total_units": 4522,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 32,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-06-03",
+      "line": "Line 1",
+      "good_units": 4133,
+      "total_units": 4185,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-06-03",
+      "line": "Line 2",
+      "good_units": 4329,
+      "total_units": 4374,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-06-03",
+      "line": "Line 3",
+      "good_units": 4540,
+      "total_units": 4588,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 28,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-06-03",
+      "line": "Line 4",
+      "good_units": 4565,
+      "total_units": 4623,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 34,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-06-04",
+      "line": "Line 1",
+      "good_units": 4216,
+      "total_units": 4271,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-06-04",
+      "line": "Line 2",
+      "good_units": 4334,
+      "total_units": 4389,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-06-04",
+      "line": "Line 3",
+      "good_units": 4538,
+      "total_units": 4585,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 39,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-06-04",
+      "line": "Line 4",
+      "good_units": 4603,
+      "total_units": 4651,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 42,
+      "downtime_reason": "Operator"
+    },
+    {
+      "date": "2026-06-05",
+      "line": "Line 1",
+      "good_units": 4360,
+      "total_units": 4411,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 44,
+      "downtime_reason": "Mechanical"
+    },
+    {
+      "date": "2026-06-05",
+      "line": "Line 2",
+      "good_units": 4388,
+      "total_units": 4446,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 50,
+      "downtime_reason": "Material Shortage"
+    },
+    {
+      "date": "2026-06-05",
+      "line": "Line 3",
+      "good_units": 4510,
+      "total_units": 4567,
+      "ideal_rate_per_hr": 690,
+      "planned_minutes": 460,
+      "downtime_minutes": 48,
+      "downtime_reason": "Quality Hold"
+    },
+    {
+      "date": "2026-06-05",
+      "line": "Line 4",
+      "good_units": 4562,
+      "total_units": 4610,
+      "ideal_rate_per_hr": 705,
+      "planned_minutes": 460,
+      "downtime_minutes": 53,
+      "downtime_reason": "CIP / Cleaning"
+    },
+    {
+      "date": "2026-06-06",
+      "line": "Line 1",
+      "good_units": 4504,
+      "total_units": 4545,
+      "ideal_rate_per_hr": 660,
+      "planned_minutes": 460,
+      "downtime_minutes": 34,
+      "downtime_reason": "Changeover"
+    },
+    {
+      "date": "2026-06-06",
+      "line": "Line 2",
+      "good_units": 4487,
+      "total_units": 4540,
+      "ideal_rate_per_hr": 675,
+      "planned_minutes": 460,
+      "downtime_minutes": 44,
+      "downtime_reason": "Mechanical"
+    }
+  ]
+}

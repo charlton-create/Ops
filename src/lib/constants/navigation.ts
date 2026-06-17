@@ -1,4 +1,4 @@
-export type NavSection = "top" | "sales" | "customers" | "team" | "admin";
+export type NavSection = "top" | "sales" | "customers" | "team" | "admin" | "eagle";
 
 export interface NavItem {
   id: string;
@@ -14,6 +14,7 @@ export const NAV_SECTIONS: { id: NavSection; label: string }[] = [
   { id: "customers", label: "Customers" },
   { id: "team", label: "Team" },
   { id: "admin", label: "Admin" },
+  { id: "eagle", label: "Eagle Beverage" },
 ];
 
 export const NAV_ITEMS: NavItem[] = [
@@ -27,4 +28,5 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "team", label: "Team Hub", route: "/team", sectionColor: "#39219F", section: "team" },
   { id: "kb", label: "Knowledge Base", route: "/kb", sectionColor: "#21799F", section: "team" },
   { id: "admin", label: "Settings", route: "/admin", sectionColor: "#6B7280", section: "admin" },
+  { id: "eagle-kpi", label: "Eagle KPI", route: "/eagle-kpi", sectionColor: "#1A56DB", section: "eagle" },
 ];

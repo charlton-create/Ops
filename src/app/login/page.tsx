@@ -61,11 +61,11 @@ export default function LoginPage() {
             </label>
             <input
               id="email"
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              placeholder="you@cat-i.ai"
+              placeholder="you@cat-i.ai or admin"
               required
             />
           </div>
@@ -105,7 +105,7 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-xs text-gray-500">
-          Default password for all users: <code className="text-gray-400">catops2026</code>
+          Dev login: <code className="text-gray-400">admin / admin</code>
         </p>
       </div>
     </div>
