@@ -302,10 +302,10 @@
       </div>
       <div class="topbar-right">
         <div class="seg" id="periodSeg">
-          <button data-period="week" class="active">Week</button>
+          <button data-period="week">Week</button>
           <button data-period="month">Month</button>
           <button data-period="quarter">Quarter</button>
-          <button data-period="annual">Annual</button>
+          <button data-period="annual" class="active">Annual</button>
         </div>
         <select class="period-select" id="periodSelect"></select>
         <div class="src-pill nodata" id="srcPill"><span class="dot"></span><span id="srcText">No data</span></div>
@@ -734,7 +734,7 @@
 <div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span id="toastMsg">Done</span></div>
 
 <script>
-const STATE={source:'nodata',sourceLabel:'No data',period:'week',periodValue:null,netsuite:null,mes:null,data:{bottling:[],straw:[],warehouse:[]}};
+const STATE={source:'nodata',sourceLabel:'No data',period:'annual',periodValue:null,netsuite:null,mes:null,data:{bottling:[],straw:[],warehouse:[]}};
 const charts={};
 const PALETTE={primary:'#1A56DB',primary2:'#60a5fa',success:'#15803d',warning:'#d97706',danger:'#dc2626',teal:'#0d9488',purple:'#7c3aed',orange:'#ea580c',grid:'#eef1f6',text:'#5a6679'};
 function dstr(d){return d.toISOString().slice(0,10);}
@@ -951,12 +951,13 @@ function testNetSuite(){
 }
 function saveNetSuite(){fetchFromNetSuite();}
 async function fetchFromNetSuite(silent){
-  const r=(typeof periodRange==='function')?periodRange():{start:'',end:''};
-  if(!silent)setNsStatus('work',`<span class="spinner"></span>Pulling KPI datasets from NetSuite…`);
+  // Pull a wide window (prior-year start → today) so every period view has data; the period filter narrows the display.
+  const _t=new Date();const fetchStart=(_t.getFullYear()-1)+'-01-01';const fetchEnd=_t.toISOString().slice(0,10);
+  if(!silent)setNsStatus('work',`<span class="spinner"></span>Pulling KPI datasets from NetSuite (since ${fetchStart})…`);
   const datasets=['bottling','straw','warehouse'];const errs=[];let total=0;
   for(const ds of datasets){
     try{
-      const qs=r.start?`&start=${r.start}&end=${r.end}`:'';
+      const qs=`&start=${fetchStart}&end=${fetchEnd}`;
       const resp=await fetch(`/api/netsuite?dataset=${ds}${qs}`);
       const j=await resp.json().catch(()=>({}));
       if(!resp.ok)throw new Error(j.error||('HTTP '+resp.status));
