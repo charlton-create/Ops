@@ -217,8 +217,13 @@ module.exports = async (req, res) => {
       ship.forEach((r) => { (byDate[r.d] = byDate[r.d] || { date: r.d }).shipments_total = Number(r.ship) || 0; });
       onTimeRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.shipments_on_time = Number(r.ontime) || 0; o.shipments_with_expected = Number(r.linked) || 0; });
       fillRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.lines_ordered = Number(r.ordered) || 0; o.lines_shipped = Number(r.shipped) || 0; });
+      // Pick productivity from WMS Closed Task (custrecord_wmsse_trn_closedtask): tasktype 3 = PICK, picker = Updated User #
+      const pickSql = `SELECT TO_CHAR(ct.custrecord_wmsse_act_end_date_clt,'YYYY-MM-DD') AS d, COUNT(*) AS picks, COUNT(DISTINCT ct.custrecord_wmsse_upd_user_no_clt) AS pickers FROM customrecord_wmsse_trn_closedtask ct WHERE ct.custrecord_wmsse_tasktype_clt=3 AND ct.custrecord_wmsse_act_end_date_clt BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(ct.custrecord_wmsse_act_end_date_clt,'YYYY-MM-DD')`;
+      let pickRows = [], pickErr = null;
+      try { pickRows = await suiteql(pickSql, creds); } catch (e) { pickErr = e.message; }
+      pickRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.pick_lines = Number(r.picks) || 0; o.pickers = Number(r.pickers) || 0; });
       const data = Object.values(byDate).sort((a, b) => (a.date < b.date ? -1 : 1));
-      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80))].filter(Boolean);
+      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80))].filter(Boolean);
       res.status(200).json({ dataset: ds, source: "netsuite", range: { start, end }, count: data.length, data, note: notes.length ? notes.join(" | ") : undefined });
       return;
     }

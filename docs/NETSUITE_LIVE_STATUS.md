@@ -14,7 +14,7 @@ account **6494782**, subsidiary **Eagle Beverage & Accessory Products, LLC** (id
 | **Shipping** | On-Time % | Item Fulfillment `trandate` ≤ source SO `custbody2` ("Expected Ship Date - M"), linked via `transactionline.createdfrom` |
 | **Shipping** | Order Fill Rate | SO lines `quantityshiprecv >= quantity` |
 | **Shipping** | Shipments/day | count of `type='ItemShip'` |
-| **WMS** (via RESTlet) | Pick/putaway tasks, productivity | saved search `customsearch4558` (WMS Closed Task) |
+| **WMS / Shipping** | **Pick productivity** (lines ÷ picker-days) | SuiteQL on `customrecord_wmsse_trn_closedtask` — tasktype `3`=PICK, picker = Updated User # (`custrecord_wmsse_upd_user_no_clt`), grouped by Actual End Date. Merged into the `warehouse` dataset. |
 | **Inventory** | Count schedule / compliance | saved search `customsearch_sc_count_date_ss` |
 
 ## Finished-goods class IDs (production split)
@@ -26,6 +26,7 @@ From `CustomClassDefaultViewResults232.csv`:
 ## Hard-won SuiteQL facts (account-specific)
 - **No** Assembly Builds / Work Order Completions — production is the Work Order's built qty (`quantityshiprecv`), **not** `built`/`quantitybuilt` (neither is a valid SuiteQL column here).
 - **Production UoM differs by line** — beverage WOs are **Each** (Bottling Line, unit id 23, bottled liquid) or **Pound** (Powder Line, unit id 1, dry/powder mix); summing the two is meaningless, so group by `tl.units` and label per unit. Straw is all **Each**, which the plant treats as **1 Case**. The dashboard shows Bottling Line (ea) + Powder Line (lb) separately and labels straw in cases.
+- **Reports ≠ saved searches.** `CUSTOMREPORT_*` (Report Builder) ids are **not** loadable via the search API (`search.load` → "INVALID_SEARCH: does not exist"); only saved searches (`customsearch_*`). To pull a Report's data, rebuild it as a saved search. The WMS Closed Task record (SuiteQL table) is `customrecord_wmsse_trn_closedtask`; task-type ids: 3=PICK, 2=PUTW, 9=MOVE, 18=XFER, 5=KTS, 7=CYCC, 14=PACK, 17=RPLN. "Task Assigned To" is empty — use "Updated User #" for the operator. Putaway begin *time* is blank, so dock-to-stock needs a receipt timestamp from a (saved-search) receipts source.
 - **No** Item Receipts → receiving KPIs unavailable from NetSuite.
 - Fulfillment→SO link is `transactionline.createdfrom` (line level). `transaction.createdfrom` (header) is **not** valid.
 - Expected ship date = SO `custbody2`; actual ship = fulfillment `trandate`.
