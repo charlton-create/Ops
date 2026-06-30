@@ -131,14 +131,24 @@ WHERE t.type = 'WorkOrd' AND tl.mainline = 'T' AND tl.class IN (${classIds.join(
   AND t.trandate BETWEEN TO_DATE('{start}','YYYY-MM-DD') AND TO_DATE('{end}','YYYY-MM-DD')
 GROUP BY TO_CHAR(t.trandate,'YYYY-MM-DD'), tl.class ORDER BY 1`;
 
+// Beverage splits into two physical lines by unit of measure:
+//   Bottling Line = liquid bottled (UoM Each, unit id 23); Powder Line = dry/powder mix (UoM Pound, unit id 1).
+const woProdByUnitSql = (classIds) => `
+SELECT TO_CHAR(t.trandate,'YYYY-MM-DD') AS "date", tl.units AS unit_id, SUM(tl.quantityshiprecv) AS "total_units", SUM(tl.quantity) AS "qty_ordered"
+FROM transaction t INNER JOIN transactionline tl ON tl.transaction = t.id
+WHERE t.type = 'WorkOrd' AND tl.mainline = 'T' AND tl.class IN (${classIds.join(',')})
+  AND t.trandate BETWEEN TO_DATE('{start}','YYYY-MM-DD') AND TO_DATE('{end}','YYYY-MM-DD')
+GROUP BY TO_CHAR(t.trandate,'YYYY-MM-DD'), tl.units ORDER BY 1`;
+const BEV_UNIT = { 23: { line: "Bottling Line", uom: "ea" }, 1: { line: "Powder Line", uom: "lb" } };
+
 const DEFAULTS = {
   bottling: {
-    sql: woProdSql(BEVERAGE_CLASSES),
-    map: (r) => ({ date: r.date, line: clsName(r.class_id), total_units: num(r.total_units), qty_ordered: num(r.qty_ordered) }),
+    sql: woProdByUnitSql(BEVERAGE_CLASSES),
+    map: (r) => { const u = BEV_UNIT[Number(r.unit_id)] || { line: "Other (unit " + r.unit_id + ")", uom: "" }; return { date: r.date, line: u.line, uom: u.uom, total_units: num(r.total_units), qty_ordered: num(r.qty_ordered) }; },
   },
   straw: {
     sql: woProdSql(STRAW_CLASSES),
-    map: (r) => ({ date: r.date, line: clsName(r.class_id), total_units: num(r.total_units), qty_ordered: num(r.qty_ordered) }),
+    map: (r) => ({ date: r.date, line: clsName(r.class_id), uom: "cases", total_units: num(r.total_units), qty_ordered: num(r.qty_ordered) }),
   },
   warehouse: {
     sql: `

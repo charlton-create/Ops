@@ -9,8 +9,8 @@ account **6494782**, subsidiary **Eagle Beverage & Accessory Products, LLC** (id
 
 | Area | KPI | Source / logic |
 |---|---|---|
-| **Bottling (Beverage)** | Units **built** | Work Orders (`type='WorkOrd'`), `SUM(tl.quantityshiprecv)` on mainline, class ∈ beverage FG |
-| **Straw** | Units **built** | same, class ∈ straw FG |
+| **Bottling (Beverage)** | Built qty by **line** | Work Orders (`type='WorkOrd'`), `SUM(tl.quantityshiprecv)` grouped by `tl.units`: **Bottling Line** = Each (unit 23, bottled liquid), **Powder Line** = Pound (unit 1, dry/powder mix). Never SUM across units. |
+| **Straw** | Built **cases** | same, class ∈ straw FG; UoM Each, which the plant treats as 1 Case |
 | **Shipping** | On-Time % | Item Fulfillment `trandate` ≤ source SO `custbody2` ("Expected Ship Date - M"), linked via `transactionline.createdfrom` |
 | **Shipping** | Order Fill Rate | SO lines `quantityshiprecv >= quantity` |
 | **Shipping** | Shipments/day | count of `type='ItemShip'` |
@@ -25,6 +25,7 @@ From `CustomClassDefaultViewResults232.csv`:
 
 ## Hard-won SuiteQL facts (account-specific)
 - **No** Assembly Builds / Work Order Completions — production is the Work Order's built qty (`quantityshiprecv`), **not** `built`/`quantitybuilt` (neither is a valid SuiteQL column here).
+- **Production UoM differs by line** — beverage WOs are **Each** (Bottling Line, unit id 23, bottled liquid) or **Pound** (Powder Line, unit id 1, dry/powder mix); summing the two is meaningless, so group by `tl.units` and label per unit. Straw is all **Each**, which the plant treats as **1 Case**. The dashboard shows Bottling Line (ea) + Powder Line (lb) separately and labels straw in cases.
 - **No** Item Receipts → receiving KPIs unavailable from NetSuite.
 - Fulfillment→SO link is `transactionline.createdfrom` (line level). `transaction.createdfrom` (header) is **not** valid.
 - Expected ship date = SO `custbody2`; actual ship = fulfillment `trandate`.
