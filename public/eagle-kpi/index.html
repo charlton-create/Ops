@@ -187,6 +187,8 @@
   .dt-table tbody tr:hover{background:var(--primary-50)}
   .dt-table td.editable{cursor:pointer;position:relative}
   .dt-table td.editable:hover{background:rgba(26,86,219,.06)}
+  .dt-table td.dirty{background:var(--warning-bg);box-shadow:inset 2px 0 0 var(--warning)}
+  .btn.spinning svg{animation:spin .7s linear infinite}
   .dt-table td.editable::after{content:"✎";position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--text-subtle);opacity:0;transition:.15s}
   .dt-table td.editable:hover::after{opacity:1}
   .dt-table input.cell-edit{width:100%;border:1px solid var(--primary);border-radius:4px;padding:4px 6px;font:inherit;font-size:var(--t5);background:var(--surface);color:var(--text);outline:none;box-shadow:0 0 0 3px var(--primary-50)}
@@ -307,6 +309,10 @@
         </div>
         <select class="period-select" id="periodSelect"></select>
         <div class="src-pill nodata" id="srcPill"><span class="dot"></span><span id="srcText">No data</span></div>
+        <button class="btn" id="refreshBtn" onclick="refreshData()" title="Re-pull data from the connected source">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Refresh
+        </button>
         <button class="btn primary" onclick="go('admin')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9"/></svg>
           Admin
@@ -650,22 +656,12 @@
       <!-- ADMIN -->
       <section class="page" id="page-admin">
         <div class="admin-tabs" id="adminTabs">
-          <button class="active" data-tab="users">User / Access</button>
-          <button data-tab="datasource">Data Source</button>
+          <button class="active" data-tab="datasource">Data Source</button>
           <button data-tab="datatables">Data Tables</button>
         </div>
 
-        <!-- ── User / Access ── -->
-        <div class="admin-section active" id="admin-users">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-            <div><h3 style="font-size:var(--t3);font-weight:700">User Management</h3><div style="font-size:var(--t6);color:var(--text-subtle);margin-top:2px">Manage team access and role assignments</div></div>
-            <button class="btn primary" onclick="addUser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>Add User</button>
-          </div>
-          <div id="userList"></div>
-        </div>
-
         <!-- ── Data Source ── -->
-        <div class="admin-section" id="admin-datasource">
+        <div class="admin-section active" id="admin-datasource">
           <div class="ds-grid">
             <div class="panel">
               <div class="panel-h"><div><h3>NetSuite Connection</h3><div class="desc">Token-based authentication (TBA / OAuth 1.0a)</div></div><span class="badge b-neutral" id="nsBadge"><span class="bd"></span>Not connected</span></div>
@@ -726,7 +722,7 @@
             <button data-dt="warehouse">Warehouse Ops</button>
           </div>
           <div class="panel">
-            <div class="panel-h"><div><h3 id="dtTitle">Bottling Production</h3><div class="desc" id="dtDesc">Showing recent rows · click any white cell to edit</div></div><div style="display:flex;gap:8px"><button class="btn sm" onclick="exportTableCSV()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Export CSV</button><button class="btn sm primary" onclick="saveTableEdits()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save</button></div></div>
+            <div class="panel-h"><div><h3 id="dtTitle">Bottling Production</h3><div class="desc" id="dtDesc">Double-click any white cell to edit · changes batch until you Save</div></div><div style="display:flex;gap:8px"><button class="btn sm" onclick="exportTableCSV()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Export CSV</button><button class="btn sm" id="dtDiscardBtn" onclick="discardEdits()" style="display:none;color:var(--danger);border-color:var(--danger-bd)">Discard</button><button class="btn sm primary" id="dtSaveBtn" onclick="saveTableEdits()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save<span id="dtPendingCount"></span></button></div></div>
             <div class="tbl-scroll" style="max-height:480px"><table class="dt-table" id="dtTable"></table></div>
           </div>
         </div>
@@ -836,34 +832,7 @@ function go(page){document.querySelectorAll('.nav-item').forEach(n=>n.classList.
 /* ── Admin tabs ── */
 document.getElementById('adminTabs').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;document.querySelectorAll('#adminTabs button').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');document.querySelectorAll('.admin-section').forEach(s=>s.classList.remove('active'));document.getElementById('admin-'+e.target.dataset.tab).classList.add('active');});
 
-/* ── User Management ── */
-const USERS=[
-  {name:'Marcus Reed',email:'marcus@eaglebev.com',role:'admin',color:'#1A56DB',status:'active'},
-  {name:'Diana Torres',email:'diana@eaglebev.com',role:'manager',color:'#0d9488',status:'active'},
-  {name:'James Park',email:'james@eaglebev.com',role:'operator',color:'#7c3aed',status:'active'},
-  {name:'Sarah Chen',email:'sarah@eaglebev.com',role:'operator',color:'#ea580c',status:'active'},
-  {name:'Robert Kim',email:'robert@eaglebev.com',role:'viewer',color:'#15803d',status:'active'},
-  {name:'Lisa Monroe',email:'lisa@eaglebev.com',role:'viewer',color:'#d97706',status:'inactive'}
-];
-function renderUserList(){
-  document.getElementById('userList').innerHTML=USERS.map((u,i)=>`<div class="user-card">
-    <div class="user-avatar" style="background:${u.color}">${u.name.charAt(0)}</div>
-    <div class="user-info"><div class="uname">${u.name}</div><div class="urole">${u.email}</div></div>
-    <select class="role-select" onchange="USERS[${i}].role=this.value;toast('Role updated for ${u.name}')">
-      ${['admin','manager','operator','viewer'].map(r=>`<option value="${r}"${u.role===r?' selected':''}>${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join('')}
-    </select>
-    <span class="user-status ${u.status}">${u.status}</span>
-    <button class="btn sm" onclick="USERS.splice(${i},1);renderUserList();toast('User removed')" style="color:var(--danger);border-color:var(--danger-bd)">Remove</button>
-  </div>`).join('');
-}
-function addUser(){
-  const name=prompt('Full name:');if(!name)return;
-  const email=prompt('Email:');if(!email)return;
-  USERS.push({name,email,role:'viewer',color:'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0'),status:'active'});
-  renderUserList();toast('User added');
-}
-
-/* ── Data Tables (admin-editable) ── */
+/* ── Data Tables (admin-editable, batch save) ── */
 let currentDT='bottling';
 const DT_COLS={
   bottling:['date','line','goodUnits','totalUnits','idealRate','plannedMin','downtimeMin','downtimeReason'],
@@ -872,54 +841,85 @@ const DT_COLS={
 };
 const DT_LOCKED=['date'];
 const DT_LABELS={bottling:'Bottling Production',straw:'Straw Production',warehouse:'Warehouse Ops'};
+let pendingEdits={}; // { dt: { 'rowIdx|col': newValue } } — staged until Save
 
 document.getElementById('dtPicker').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;document.querySelectorAll('#dtPicker button').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');currentDT=e.target.dataset.dt;renderDataTable();});
 
+function pendingFor(dt){return pendingEdits[dt]||(pendingEdits[dt]={});}
+function pendingCount(){return Object.values(pendingEdits).reduce((n,m)=>n+Object.keys(m).length,0);}
+function updateSaveUI(){
+  const n=pendingCount();
+  const cnt=document.getElementById('dtPendingCount'); if(cnt)cnt.textContent=n?` (${n})`:'';
+  const disc=document.getElementById('dtDiscardBtn'); if(disc)disc.style.display=n?'inline-flex':'none';
+}
 function renderDataTable(){
-  const rows=STATE.data[currentDT].slice(-20).reverse();
+  const all=STATE.data[currentDT]||[];
   const cols=DT_COLS[currentDT];
+  const pend=pendingFor(currentDT);
   document.getElementById('dtTitle').textContent=DT_LABELS[currentDT];
-  document.getElementById('dtDesc').textContent=`${STATE.data[currentDT].length} total rows · showing last 20 · click any white cell to edit`;
   const tbl=document.getElementById('dtTable');
+  if(!all.length){document.getElementById('dtDesc').textContent='No data — upload a CSV or connect a source.';tbl.innerHTML='';updateSaveUI();return;}
+  document.getElementById('dtDesc').textContent=`${all.length} total rows · showing last 20 · double-click a white cell to edit`;
+  const rows=all.slice(-20).reverse();
   tbl.innerHTML=`<thead><tr>${cols.map(c=>`<th>${c}${DT_LOCKED.includes(c)?' 🔒':''}</th>`).join('')}</tr></thead><tbody>${
     rows.map((r,ri)=>{
-      const idx=STATE.data[currentDT].length-1-ri;
+      const idx=all.length-1-ri;
       return`<tr>${cols.map(c=>{
         const locked=DT_LOCKED.includes(c);
-        const val=r[c]!=null?r[c]:'';
-        return locked
-          ?`<td class="locked">${val}</td>`
-          :`<td class="editable" ondblclick="editCell(this,'${currentDT}',${idx},'${c}')">${typeof val==='number'?val.toLocaleString():val}</td>`;
+        const key=idx+'|'+c;
+        const has=Object.prototype.hasOwnProperty.call(pend,key);
+        const val=has?pend[key]:(r[c]!=null?r[c]:'');
+        if(locked)return`<td class="locked">${val}</td>`;
+        return`<td class="editable${has?' dirty':''}" ondblclick="editCell(this,${idx},'${c}')">${typeof val==='number'?val.toLocaleString():val}</td>`;
       }).join('')}</tr>`;
     }).join('')
   }</tbody>`;
+  updateSaveUI();
 }
-function editCell(td,dt,rowIdx,col){
+function editCell(td,rowIdx,col){
   if(td.querySelector('input'))return;
-  const raw=STATE.data[dt][rowIdx][col];
-  const old=td.textContent;
-  td.innerHTML=`<input class="cell-edit" type="text" value="${raw!=null?raw:''}">`;
+  const pend=pendingFor(currentDT);
+  const key=rowIdx+'|'+col;
+  const cur=Object.prototype.hasOwnProperty.call(pend,key)?pend[key]:STATE.data[currentDT][rowIdx][col];
+  td.innerHTML=`<input class="cell-edit" type="text" value="${cur!=null?cur:''}">`;
   const inp=td.querySelector('input');inp.focus();inp.select();
   function commit(){
     const v=inp.value.trim();
     const num=parseFloat(v);
-    STATE.data[dt][rowIdx][col]=isNaN(num)||v===''?v:num;
+    const nv=(v===''||isNaN(num))?v:num;
+    const orig=STATE.data[currentDT][rowIdx][col];
+    if(nv===orig||(nv===''&&orig==null)){delete pend[key];}else{pend[key]=nv;}
     renderDataTable();
   }
   inp.addEventListener('blur',commit);
-  inp.addEventListener('keydown',e=>{if(e.key==='Enter')commit();if(e.key==='Escape'){td.textContent=old;}});
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')inp.blur();if(e.key==='Escape')renderDataTable();});
 }
-function saveTableEdits(){toast(DT_LABELS[currentDT]+' saved');renderAll();}
+function saveTableEdits(){
+  let n=0;
+  Object.keys(pendingEdits).forEach(dt=>{const m=pendingEdits[dt];Object.keys(m).forEach(k=>{const i=k.indexOf('|');const idx=+k.slice(0,i),col=k.slice(i+1);if(STATE.data[dt]&&STATE.data[dt][idx]){STATE.data[dt][idx][col]=m[k];n++;}});});
+  if(!n){toast('No changes to save');return;}
+  pendingEdits={};persist();renderDataTable();renderAll();
+  toast(`${n} change${n>1?'s':''} saved`);
+}
+function discardEdits(){pendingEdits={};renderDataTable();toast('Changes discarded');}
 function exportTableCSV(){
   const cols=DT_COLS[currentDT];
-  const rows=STATE.data[currentDT];
+  const rows=STATE.data[currentDT]||[];
   const csv=cols.join(',')+'\n'+rows.map(r=>cols.map(c=>r[c]!=null?r[c]:'').join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`eagle_${currentDT}_data.csv`;document.body.appendChild(a);a.click();a.remove();
   toast('CSV exported');
 }
 
-function renderAdmin(){renderUserList();renderDataTable();}
+/* Refresh — re-pull from the connected live source */
+function refreshData(){
+  if(STATE.source==='netsuite'){toast('Refreshing from NetSuite…');if(typeof fetchFromNetSuite==='function')fetchFromNetSuite(true);}
+  else if(STATE.source==='mes'){toast('Refreshing from MES…');if(typeof fetchFromMES==='function')fetchFromMES(true);}
+  else if(hasAnyData()){renderAll();toast('View refreshed');}
+  else{toast('No source connected — upload a CSV or connect in Admin → Data Source');}
+}
+
+function renderAdmin(){renderDataTable();}
 document.querySelectorAll('.nav-item').forEach(n=>n.addEventListener('click',()=>go(n.dataset.page)));
 document.getElementById('periodSeg').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;document.querySelectorAll('#periodSeg button').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');STATE.period=e.target.dataset.period;STATE.periodValue=null;buildPeriodOptions();renderAll();});
 document.getElementById('periodSelect').addEventListener('change',e=>{STATE.periodValue=isNaN(+e.target.value)?e.target.value:+e.target.value;renderAll();});
