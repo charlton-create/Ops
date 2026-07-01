@@ -207,7 +207,9 @@ module.exports = async (req, res) => {
       // On-time: fulfillment actual ship (f.trandate) <= source SO expected ship (so.shipdate), linked via the fulfillment LINE's createdfrom
       // Expected Ship Date - M (custbody2) lives on the Sales Order; actual ship = fulfillment trandate
       const onTimeSql = `SELECT TO_CHAR(f.trandate,'YYYY-MM-DD') AS d, COUNT(DISTINCT CASE WHEN so.custbody2 IS NOT NULL AND f.trandate <= so.custbody2 THEN f.id END) AS ontime, COUNT(DISTINCT CASE WHEN so.custbody2 IS NOT NULL THEN f.id END) AS linked FROM transaction f INNER JOIN transactionline fl ON fl.transaction = f.id INNER JOIN transaction so ON so.id = fl.createdfrom AND so.type='SalesOrd' WHERE f.type='ItemShip' AND f.trandate BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(f.trandate,'YYYY-MM-DD')`;
-      const fillSql = `SELECT TO_CHAR(t.trandate,'YYYY-MM-DD') AS d, COUNT(tl.id) AS ordered, SUM(CASE WHEN tl.quantityshiprecv >= tl.quantity THEN 1 ELSE 0 END) AS shipped FROM transaction t INNER JOIN transactionline tl ON tl.transaction = t.id WHERE t.type='SalesOrd' AND tl.mainline='F' AND t.trandate BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'YYYY-MM-DD')`;
+      // Fill rate = fulfilled qty ÷ ordered qty on COMPLETED finished-good orders (Billed=G, Closed=H).
+      // SO line quantity is stored negative here → ABS(); non-Assembly lines carry junk magnitudes → itemtype filter.
+      const fillSql = `SELECT TO_CHAR(t.trandate,'YYYY-MM-DD') AS d, ROUND(SUM(ABS(tl.quantity))) AS ordered, ROUND(SUM(tl.quantityshiprecv)) AS fulfilled FROM transaction t INNER JOIN transactionline tl ON tl.transaction = t.id WHERE t.type='SalesOrd' AND tl.mainline='F' AND tl.itemtype='Assembly' AND t.status IN ('G','H') AND t.trandate BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'YYYY-MM-DD')`;
       const ship = await suiteql(shipSql, creds);
       let onTimeRows = [], otErr = null;
       try { onTimeRows = await suiteql(onTimeSql, creds); } catch (e) { otErr = e.message; }
@@ -216,7 +218,7 @@ module.exports = async (req, res) => {
       const byDate = {};
       ship.forEach((r) => { (byDate[r.d] = byDate[r.d] || { date: r.d }).shipments_total = Number(r.ship) || 0; });
       onTimeRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.shipments_on_time = Number(r.ontime) || 0; o.shipments_with_expected = Number(r.linked) || 0; });
-      fillRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.lines_ordered = Number(r.ordered) || 0; o.lines_shipped = Number(r.shipped) || 0; });
+      fillRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.qty_ordered = Number(r.ordered) || 0; o.qty_fulfilled = Number(r.fulfilled) || 0; });
       // Pick productivity from WMS Closed Task (custrecord_wmsse_trn_closedtask): tasktype 3 = PICK, picker = Updated User #
       const pickSql = `SELECT TO_CHAR(ct.custrecord_wmsse_act_end_date_clt,'YYYY-MM-DD') AS d, COUNT(*) AS picks, COUNT(DISTINCT ct.custrecord_wmsse_upd_user_no_clt) AS pickers FROM customrecord_wmsse_trn_closedtask ct WHERE ct.custrecord_wmsse_tasktype_clt=3 AND ct.custrecord_wmsse_act_end_date_clt BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(ct.custrecord_wmsse_act_end_date_clt,'YYYY-MM-DD')`;
       let pickRows = [], pickErr = null;
