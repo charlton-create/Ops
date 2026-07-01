@@ -222,8 +222,13 @@ module.exports = async (req, res) => {
       let pickRows = [], pickErr = null;
       try { pickRows = await suiteql(pickSql, creds); } catch (e) { pickErr = e.message; }
       pickRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.pick_lines = Number(r.picks) || 0; o.pickers = Number(r.pickers) || 0; });
+      // Receiving from Item Receipts: volume + on-time vs the source PO's due date (createdfrom → PO.duedate)
+      const rcptSql = `SELECT TO_CHAR(t.trandate,'YYYY-MM-DD') AS d, COUNT(DISTINCT t.id) AS receipts, COUNT(CASE WHEN po.duedate IS NOT NULL THEN 1 END) AS due, COUNT(CASE WHEN po.duedate IS NOT NULL AND t.trandate <= po.duedate THEN 1 END) AS ontime FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id AND tl.mainline='F' LEFT JOIN transaction po ON po.id=tl.createdfrom WHERE t.type='ItemRcpt' AND t.trandate BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'YYYY-MM-DD')`;
+      let rcptRows = [], rcptErr = null;
+      try { rcptRows = await suiteql(rcptSql, creds); } catch (e) { rcptErr = e.message; }
+      rcptRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.receipts_total = Number(r.receipts) || 0; o.receipt_lines_due = Number(r.due) || 0; o.receipt_lines_ontime = Number(r.ontime) || 0; });
       const data = Object.values(byDate).sort((a, b) => (a.date < b.date ? -1 : 1));
-      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80))].filter(Boolean);
+      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80)), rcptErr && ("receiving unavailable: " + rcptErr.slice(0, 80))].filter(Boolean);
       res.status(200).json({ dataset: ds, source: "netsuite", range: { start, end }, count: data.length, data, note: notes.length ? notes.join(" | ") : undefined });
       return;
     }

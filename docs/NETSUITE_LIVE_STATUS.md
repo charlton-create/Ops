@@ -15,6 +15,7 @@ account **6494782**, subsidiary **Eagle Beverage & Accessory Products, LLC** (id
 | **Shipping** | Order Fill Rate | SO lines `quantityshiprecv >= quantity` |
 | **Shipping** | Shipments/day | count of `type='ItemShip'` |
 | **WMS / Shipping** | **Pick productivity** (lines ÷ picker-days) | SuiteQL on `customrecord_wmsse_trn_closedtask` — tasktype `3`=PICK, picker = Updated User # (`custrecord_wmsse_upd_user_no_clt`), grouped by Actual End Date. Merged into the `warehouse` dataset. |
+| **Receiving** | **Receipts/day** + **On-time %** | Item Receipts (`type='ItemRcpt'`); on-time = receipt `trandate` ≤ source PO `duedate` via `tl.createdfrom` (due date on ~⅓ of lines). Merged into the `warehouse` dataset. |
 | **Inventory** | Count schedule / compliance | saved search `customsearch_sc_count_date_ss` |
 
 ## Finished-goods class IDs (production split)
@@ -27,7 +28,7 @@ From `CustomClassDefaultViewResults232.csv`:
 - **No** Assembly Builds / Work Order Completions — production is the Work Order's built qty (`quantityshiprecv`), **not** `built`/`quantitybuilt` (neither is a valid SuiteQL column here).
 - **Production UoM differs by line** — beverage WOs are **Each** (Bottling Line, unit id 23, bottled liquid) or **Pound** (Powder Line, unit id 1, dry/powder mix); summing the two is meaningless, so group by `tl.units` and label per unit. Straw is all **Each**, which the plant treats as **1 Case**. The dashboard shows Bottling Line (ea) + Powder Line (lb) separately and labels straw in cases.
 - **Reports ≠ saved searches.** `CUSTOMREPORT_*` (Report Builder) ids are **not** loadable via the search API (`search.load` → "INVALID_SEARCH: does not exist"); only saved searches (`customsearch_*`). To pull a Report's data, rebuild it as a saved search. The WMS Closed Task record (SuiteQL table) is `customrecord_wmsse_trn_closedtask`; task-type ids: 3=PICK, 2=PUTW, 9=MOVE, 18=XFER, 5=KTS, 7=CYCC, 14=PACK, 17=RPLN. "Task Assigned To" is empty — use "Updated User #" for the operator. Putaway begin *time* is blank, so dock-to-stock needs a receipt timestamp from a (saved-search) receipts source.
-- **No** Item Receipts → receiving KPIs unavailable from NetSuite.
+- **Item Receipts DO exist** (`type='ItemRcpt'`, ~1,600+/yr) and are SuiteQL-queryable — an earlier scan wrongly reported zero (the token role lacked the permission at that time). Receiving volume + on-time are now live; on-time = receipt `trandate` ≤ source PO `duedate` via `tl.createdfrom` (PO due date on ~⅓ of receipt lines). **Dock-to-stock** still pending — needs a receipt→putaway join (WMS PUTW end). The `customsearch4561` Item-Receipt saved search does **not** load via the RESTlet ("unable to determine record type"), so query the transaction table directly instead.
 - Fulfillment→SO link is `transactionline.createdfrom` (line level). `transaction.createdfrom` (header) is **not** valid.
 - Expected ship date = SO `custbody2`; actual ship = fulfillment `trandate`.
 - `GROUP BY t.type` and `BUILTIN.DF(...)` in grouped queries throw 500 — use `CASE WHEN t.type=...` aggregation instead.
