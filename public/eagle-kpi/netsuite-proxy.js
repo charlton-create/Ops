@@ -191,6 +191,38 @@ module.exports = async (req, res) => {
     }
     return;
   }
+  // Open PO Aging — open PO lines aged from last receipt (or PO date). International = item class 112 (Purchase Straws-FG).
+  if (ds === "poaging") {
+    try {
+      const creds = getCreds();
+      const q = `SELECT t.tranid AS po, TO_CHAR(t.trandate,'YYYY-MM-DD') AS po_date, BUILTIN.DF(t.entity) AS vendor,
+        BUILTIN.DF(pol.item) AS item, pol.class AS class_id, ABS(pol.quantity) AS ordered, ABS(pol.quantityshiprecv) AS received,
+        (SELECT TO_CHAR(MAX(ir.trandate),'YYYY-MM-DD') FROM transaction ir INNER JOIN transactionline irl ON irl.transaction=ir.id WHERE ir.type='ItemRcpt' AND irl.createdfrom = t.id AND irl.item = pol.item) AS last_receipt
+        FROM transaction t INNER JOIN transactionline pol ON pol.transaction=t.id AND pol.mainline='F' AND pol.item IS NOT NULL
+        WHERE t.type='PurchOrd' AND t.status IN ('B','D','E') AND ABS(pol.quantity) > ABS(pol.quantityshiprecv)`;
+      const rows = await suiteql(q, creds, 1000, 5);
+      const today = new Date();
+      const INTL_CLASS = 112; // Purchase Straws - FG = imported
+      const DAY = 86400000;
+      // Tiers (count of open PO lines): green = within tolerance (dom 4wk / intl 8wk), yellow = tol→12wk, pink = 12→26wk, red = >26wk
+      const tiers = { green: 0, yellow: 0, pink: 0, red: 0 };
+      const list = [];
+      rows.forEach((r) => {
+        const intl = Number(r.class_id) === INTL_CLASS;
+        const anchor = r.last_receipt || r.po_date;
+        const weeks = anchor ? +(((today - new Date(anchor + "T00:00:00")) / DAY) / 7).toFixed(1) : null;
+        const open = num(r.ordered) - num(r.received);
+        const thr = intl ? 8 : 4;
+        let tier = "green";
+        if (weeks != null) { if (weeks > 26) tier = "red"; else if (weeks > 12) tier = "pink"; else if (weeks > thr) tier = "yellow"; }
+        tiers[tier]++;
+        if (tier !== "green") list.push({ po: r.po, vendor: r.vendor, item: r.item, open: Math.round(open), po_date: r.po_date, last_receipt: r.last_receipt || null, origin: intl ? "International" : "Domestic", weeks, tier });
+      });
+      list.sort((a, b) => b.weeks - a.weeks);
+      res.status(200).json({ dataset: "poaging", tiers, count: list.length, rows: list });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
   if (!DEFAULTS[ds]) {
     res.status(400).json({ error: `unknown dataset "${ds}" (bottling|straw|warehouse)` });
     return;
