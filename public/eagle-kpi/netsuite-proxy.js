@@ -223,6 +223,34 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
+  // Material Draw — expected component consumption from live Work Orders, bucketed by corrected class (Items730 map). Built (mainline T) split FG vs sub-assembly.
+  if (ds === "materialdraw") {
+    try {
+      const creds = getCreds();
+      let ICMAP = {};
+      try { ICMAP = require("./itemclass.json"); } catch (e) {}
+      const role = (cls) => { const s = String(cls || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
+      const t = new Date();
+      const startY = (t.getFullYear() - 1) + "-01-01";
+      const endY = t.toISOString().slice(0, 10);
+      const builtSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(tl.item) AS name, SUM(tl.quantity) AS qty FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id WHERE t.type='WorkOrd' AND tl.mainline='T' AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(tl.item)`;
+      const drawSql = `SELECT BUILTIN.DF(tl.item) AS name, SUM(ABS(tl.quantity)) AS qty, COUNT(*) AS lines FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.item IS NOT NULL AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY BUILTIN.DF(tl.item)`;
+      const builtRows = await suiteql(builtSql, creds, 1000, 12);
+      const drawRows = await suiteql(drawSql, creds, 1000, 12);
+      const builtTot = { FG: 0, SUB: 0, OTHER: 0 };
+      const wkMap = {};
+      builtRows.forEach((r) => { const rl = role(ICMAP[r.name]); const q = num(r.qty); const b = (rl === "FG" || rl === "SUB") ? rl : "OTHER"; builtTot[b] += q; const w = wkMap[r.wk] = wkMap[r.wk] || { wk: r.wk, d: r.d, FG: 0, SUB: 0, OTHER: 0 }; w[b] += q; if (r.d < w.d) w.d = r.d; });
+      const builtWeekly = Object.values(wkMap).sort((a, b) => a.d < b.d ? -1 : 1).map((w) => ({ wk: w.wk, d: w.d, FG: Math.round(w.FG), SUB: Math.round(w.SUB) }));
+      const clsMap = {}; const drawTot = { RM: 0, SUB: 0, PKG: 0, FG: 0, OTHER: 0, OBS: 0 };
+      const comps = [];
+      drawRows.forEach((r) => { const inMap = !!ICMAP[r.name]; const cls = inMap ? ICMAP[r.name] : "Unclassified"; const rl = role(inMap ? cls : ""); const q = num(r.qty); drawTot[rl] = (drawTot[rl] || 0) + q; const c = clsMap[cls] = clsMap[cls] || { cls, role: rl, total: 0 }; c.total += q; comps.push({ name: r.name, cls, role: rl, qty: Math.round(q) }); });
+      const drawByClass = Object.values(clsMap).map((c) => ({ cls: c.cls, role: c.role, total: Math.round(c.total) })).sort((a, b) => b.total - a.total);
+      comps.sort((a, b) => b.qty - a.qty);
+      Object.keys(drawTot).forEach((k) => drawTot[k] = Math.round(drawTot[k]));
+      res.status(200).json({ dataset: "materialdraw", range: { start: startY, end: endY }, builtTotals: { FG: Math.round(builtTot.FG), SUB: Math.round(builtTot.SUB), OTHER: Math.round(builtTot.OTHER) }, builtWeekly, drawTotals: drawTot, drawByClass, topComponents: comps.filter((c) => c.role !== "PKG").slice(0, 20), pkgDrawPending: drawTot.PKG, mapItems: Object.keys(ICMAP).length, note: "Expected draw from live WO demand lines; class per corrected Items730 map. PKG excluded from top components — UOM normalization pending." });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
   if (!DEFAULTS[ds]) {
     res.status(400).json({ error: `unknown dataset "${ds}" (bottling|straw|warehouse)` });
     return;
