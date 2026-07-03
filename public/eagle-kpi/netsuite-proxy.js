@@ -223,7 +223,7 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
-  // Material Draw — expected component consumption from live Work Orders, bucketed by corrected class (Items730 map). Built (mainline T) split FG vs sub-assembly.
+  // Material Draw — RM + packaging consumed on Work Orders, reported by the FINISHED-GOOD class built (phantom sub-assemblies explode into the FG WO). Live class.
   if (ds === "materialdraw") {
     try {
       const creds = getCreds();
@@ -233,21 +233,32 @@ module.exports = async (req, res) => {
       const t = new Date();
       const startY = (t.getFullYear() - 1) + "-01-01";
       const endY = t.toISOString().slice(0, 10);
-      const builtSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(tl.item) AS name, SUM(tl.quantity) AS qty FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id WHERE t.type='WorkOrd' AND tl.mainline='T' AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(tl.item)`;
-      const drawSql = `SELECT BUILTIN.DF(tl.item) AS name, SUM(ABS(tl.quantity)) AS qty, COUNT(*) AS lines FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.item IS NOT NULL AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY BUILTIN.DF(tl.item)`;
+      const builtSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(im.class) AS cls, SUM(tlm.quantity) AS qty FROM transaction t INNER JOIN transactionline tlm ON tlm.transaction=t.id AND tlm.mainline='T' INNER JOIN item im ON im.id=tlm.item WHERE t.type='WorkOrd' AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(im.class)`;
+      const fgSql = `SELECT BUILTIN.DF(fgc.parent) AS prod_line, BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(tl.units) AS uom, ROUND(SUM(ABS(tl.quantity))) AS qty FROM transaction t INNER JOIN transactionline tl ON tl.transaction=t.id INNER JOIN item ci ON ci.id=tl.item INNER JOIN transactionline tlm ON tlm.transaction=t.id AND tlm.mainline='T' INNER JOIN item im ON im.id=tlm.item INNER JOIN classification fgc ON fgc.id=im.class WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.item IS NOT NULL AND t.trandate >= TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate <= TO_DATE('${endY}','YYYY-MM-DD') GROUP BY BUILTIN.DF(fgc.parent), BUILTIN.DF(im.class), BUILTIN.DF(ci.class), BUILTIN.DF(tl.units)`;
       const builtRows = await suiteql(builtSql, creds, 1000, 12);
-      const drawRows = await suiteql(drawSql, creds, 1000, 12);
-      const builtTot = { FG: 0, SUB: 0, OTHER: 0 };
-      const wkMap = {};
-      builtRows.forEach((r) => { const rl = role(ICMAP[r.name]); const q = num(r.qty); const b = (rl === "FG" || rl === "SUB") ? rl : "OTHER"; builtTot[b] += q; const w = wkMap[r.wk] = wkMap[r.wk] || { wk: r.wk, d: r.d, FG: 0, SUB: 0, OTHER: 0 }; w[b] += q; if (r.d < w.d) w.d = r.d; });
-      const builtWeekly = Object.values(wkMap).sort((a, b) => a.d < b.d ? -1 : 1).map((w) => ({ wk: w.wk, d: w.d, FG: Math.round(w.FG), SUB: Math.round(w.SUB) }));
-      const clsMap = {}; const drawTot = { RM: 0, SUB: 0, PKG: 0, FG: 0, OTHER: 0, OBS: 0 };
-      const comps = [];
-      drawRows.forEach((r) => { const inMap = !!ICMAP[r.name]; const cls = inMap ? ICMAP[r.name] : "Unclassified"; const rl = role(inMap ? cls : ""); const q = num(r.qty); drawTot[rl] = (drawTot[rl] || 0) + q; const c = clsMap[cls] = clsMap[cls] || { cls, role: rl, total: 0 }; c.total += q; comps.push({ name: r.name, cls, role: rl, qty: Math.round(q) }); });
-      const drawByClass = Object.values(clsMap).map((c) => ({ cls: c.cls, role: c.role, total: Math.round(c.total) })).sort((a, b) => b.total - a.total);
-      comps.sort((a, b) => b.qty - a.qty);
-      Object.keys(drawTot).forEach((k) => drawTot[k] = Math.round(drawTot[k]));
-      res.status(200).json({ dataset: "materialdraw", range: { start: startY, end: endY }, builtTotals: { FG: Math.round(builtTot.FG), SUB: Math.round(builtTot.SUB), OTHER: Math.round(builtTot.OTHER) }, builtWeekly, drawTotals: drawTot, drawByClass, topComponents: comps.filter((c) => c.role !== "PKG").slice(0, 20), pkgDrawPending: drawTot.PKG, mapItems: Object.keys(ICMAP).length, note: "Expected draw from live WO demand lines; class per corrected Items730 map. PKG excluded from top components — UOM normalization pending." });
+      const fgRows = await suiteql(fgSql, creds, 1000, 12);
+      let builtFg = 0; const wkMap = {};
+      builtRows.forEach((r) => { if (role(r.cls) !== "FG") return; const q = num(r.qty); builtFg += q; const w = wkMap[r.wk] = wkMap[r.wk] || { wk: r.wk, d: r.d, FG: 0 }; w.FG += q; if (r.d < w.d) w.d = r.d; });
+      const builtWeekly = Object.values(wkMap).sort((a, b) => a.d < b.d ? -1 : 1).map((w) => ({ wk: w.wk, d: w.d, FG: Math.round(w.FG) }));
+      const lineMap = {}; let rmTotal = 0, pkgTotal = 0, pkgFilm = 0, legacyRm = 0;
+      fgRows.forEach((r) => {
+        const fgR = role(r.fg_class), cr = role(r.comp_class), q = num(r.qty);
+        if (cr === "RM" && fgR !== "FG") { legacyRm += q; return; }
+        if (fgR !== "FG") return;
+        let matRole;
+        if (cr === "RM") matRole = "RM";
+        else if (cr === "PKG" && !/secondary/i.test(r.comp_class) && r.uom === "Each") matRole = "PKG";
+        else if (cr === "PKG" && !/secondary/i.test(r.comp_class)) { pkgFilm += q; return; }
+        else return;
+        const line = r.prod_line || "Unassigned line";
+        const L = lineMap[line] || (lineMap[line] = { line, rm: 0, pkg: 0, fgs: {} });
+        const F = L.fgs[r.fg_class] || (L.fgs[r.fg_class] = { fgClass: r.fg_class, rm: 0, pkg: 0, mats: {} });
+        const mk = r.comp_class + "|" + r.uom; const M = F.mats[mk] || (F.mats[mk] = { cls: r.comp_class, role: matRole, uom: r.uom, qty: 0 });
+        M.qty += q;
+        if (matRole === "RM") { F.rm += q; L.rm += q; rmTotal += q; } else { F.pkg += q; L.pkg += q; pkgTotal += q; }
+      });
+      const lines = Object.values(lineMap).map((L) => ({ line: L.line, rm: Math.round(L.rm), pkg: Math.round(L.pkg), fgs: Object.values(L.fgs).map((F) => ({ fgClass: F.fgClass, rm: Math.round(F.rm), pkg: Math.round(F.pkg), materials: Object.values(F.mats).map((m) => ({ cls: m.cls, role: m.role, uom: m.uom, qty: Math.round(m.qty) })).sort((a, b) => b.qty - a.qty) })).sort((a, b) => (b.rm + b.pkg) - (a.rm + a.pkg)) })).sort((a, b) => (b.rm + b.pkg) - (a.rm + a.pkg));
+      res.status(200).json({ dataset: "materialdraw", range: { start: startY, end: endY }, builtFgUnits: Math.round(builtFg), builtWeekly, lines, rmTotal: Math.round(rmTotal), pkgTotal: Math.round(pkgTotal), pkgFilm: Math.round(pkgFilm), legacyRm: Math.round(legacyRm), note: "RM + primary packaging (Each) on Work Orders, grouped Production Line -> FG class -> material class. Secondary packaging excluded; paper-wrap/film (Length) and pre-Feb-2026 sub-assembly RM tracked separately." });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
