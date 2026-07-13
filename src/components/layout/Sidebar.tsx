@@ -16,6 +16,7 @@ const ICONS: Record<string, string> = {
   team: "👥",
   kb: "📚",
   admin: "⚙️",
+  "eagle-kpi": "🦅",
 };
 
 export function Sidebar({ userName, userColor }: { userName: string; userColor: string }) {

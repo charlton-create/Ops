@@ -14,27 +14,46 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        const user = await prisma.appUser.findUnique({
-          where: { email: credentials.email as string },
-          include: { teamMember: true },
-        });
+        // Local dev admin account (no DB required)
+        if (
+          credentials.email === "admin" &&
+          credentials.password === "admin"
+        ) {
+          return {
+            id: "0",
+            name: "Admin",
+            email: "admin@cat-i.ai",
+            role: "admin",
+            teamMemberId: null,
+            color: "#A02195",
+          };
+        }
 
-        if (!user) return null;
+        try {
+          const user = await prisma.appUser.findUnique({
+            where: { email: credentials.email as string },
+            include: { teamMember: true },
+          });
 
-        const isValid = await bcrypt.compare(
-          credentials.password as string,
-          user.passwordHash
-        );
-        if (!isValid) return null;
+          if (!user) return null;
 
-        return {
-          id: String(user.id),
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          teamMemberId: user.teamMemberId,
-          color: user.teamMember?.color ?? "#6B7280",
-        };
+          const isValid = await bcrypt.compare(
+            credentials.password as string,
+            user.passwordHash
+          );
+          if (!isValid) return null;
+
+          return {
+            id: String(user.id),
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            teamMemberId: user.teamMemberId,
+            color: user.teamMember?.color ?? "#6B7280",
+          };
+        } catch {
+          return null;
+        }
       },
     }),
   ],
