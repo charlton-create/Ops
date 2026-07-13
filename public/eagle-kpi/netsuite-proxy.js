@@ -262,6 +262,69 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
+  // Material Yield / Scrap variance — WO component ACTUAL issued (quantityshiprecv) vs
+  // STANDARD (BOM required qty scaled to the qty actually built), by FINISHED-GOOD class
+  // and component UoM (never sum across UoM). yield% = standard/actual; loss = actual-standard.
+  if (ds === "materialyield") {
+    try {
+      const creds = getCreds();
+      const isFg = (cls) => /-fg| fg$|sno-cone/i.test(String(cls || ""));
+      const t = new Date();
+      const startY = (t.getFullYear() - 1) + "-01-01";
+      const endY = t.toISOString().slice(0, 10);
+      const scaled = "ABS(cl.quantity) * CASE WHEN ABS(ml.quantity)>0 THEN ml.quantityshiprecv/ABS(ml.quantity) ELSE 0 END";
+      const byClassSql = `SELECT BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(cl.units) AS uom,
+          ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard
+        FROM transaction t
+        JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL
+        JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T'
+        JOIN item im ON im.id=ml.item
+        WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0
+          AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')
+        GROUP BY BUILTIN.DF(im.class), BUILTIN.DF(cl.units)`;
+      const weeklySql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d,
+          ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard
+        FROM transaction t
+        JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL
+        JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T'
+        JOIN item im ON im.id=ml.item
+        WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0
+          AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')
+        GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`;
+      const [clsRows, wkRows] = await Promise.all([suiteql(byClassSql, creds, 1000, 12), suiteql(weeklySql, creds, 1000, 12)]);
+      const classes = clsRows
+        .filter((r) => isFg(r.fg_class))
+        .map((r) => { const a = num(r.actual), s = num(r.standard); return { fgClass: r.fg_class, uom: r.uom, actual: Math.round(a), standard: Math.round(s), lossPct: a > 0 ? +(100 * (a - s) / a).toFixed(1) : 0, yieldPct: a > 0 ? +(100 * s / a).toFixed(1) : null }; })
+        .sort((a, b) => b.actual - a.actual);
+      const weekly = wkRows.map((r) => { const a = num(r.actual), s = num(r.standard); return { wk: r.wk, d: r.d, actual: Math.round(a), standard: Math.round(s), yieldPct: a > 0 ? +(100 * s / a).toFixed(1) : null }; }).sort((a, b) => a.d < b.d ? -1 : 1);
+      const tA = classes.reduce((n, c) => n + c.actual, 0), tS = classes.reduce((n, c) => n + c.standard, 0);
+      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tA > 0 ? +(100 * tS / tA).toFixed(1) : null, actualTotal: Math.round(tA), standardTotal: Math.round(tS), classes, weekly, note: "Actual component consumption (issued) vs BOM standard scaled to units built, on Work Orders, by finished-good class + UoM. yield% = standard ÷ actual; loss% = (actual−standard) ÷ actual (over-consumption)." });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
+  // Inventory Accuracy — dollar-based from native Inventory Adjustments (the count
+  // reconciliation output): accuracy% = 1 − |adjustment value| ÷ current inventory value.
+  // Dollar-normalized so mixed UoM don't distort it.
+  if (ds === "invaccuracy") {
+    try {
+      const creds = getCreds();
+      const invValRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4);
+      const iv = num(invValRows[0] && invValRows[0].val);
+      const t = new Date();
+      const start = new Date(t.getTime() - 182 * 86400000).toISOString().slice(0, 10); // ~26 weeks
+      const wkSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d,
+          ROUND(SUM(ABS(tl.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS adjval, COUNT(DISTINCT t.id) AS adjustments
+        FROM transaction t JOIN transactionline tl ON tl.transaction=t.id JOIN item i ON i.id=tl.item
+        WHERE t.type='InvAdjst' AND tl.item IS NOT NULL AND tl.mainline='F'
+          AND t.trandate>=TO_DATE('${start}','YYYY-MM-DD')
+        GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`;
+      const wkRows = await suiteql(wkSql, creds, 1000, 8);
+      const weekly = wkRows.map((r) => { const av = num(r.adjval); return { wk: r.wk, d: r.d, adjVal: Math.round(av), adjustments: num(r.adjustments), accuracyPct: iv > 0 ? +(100 * (1 - av / iv)).toFixed(2) : null }; }).sort((a, b) => a.d < b.d ? -1 : 1);
+      const totalAdj = weekly.reduce((n, w) => n + w.adjVal, 0);
+      res.status(200).json({ dataset: "invaccuracy", inventoryValue: Math.round(iv), totalAdjValue: Math.round(totalAdj), currentAccuracyPct: iv > 0 ? +(100 * (1 - totalAdj / iv)).toFixed(2) : null, weekly, note: "Accuracy% = 1 − |inventory adjustment value| ÷ current inventory value (dollar-normalized). Source: native Inventory Adjustments — the count-reconciliation output." });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
   if (!DEFAULTS[ds]) {
     res.status(400).json({ error: `unknown dataset "${ds}" (bottling|straw|warehouse)` });
     return;
