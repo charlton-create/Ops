@@ -17,6 +17,8 @@ account **6494782**, subsidiary **Eagle Beverage & Accessory Products, LLC** (id
 | **WMS / Shipping** | **Pick productivity** (lines ÷ picker-days) | SuiteQL on `customrecord_wmsse_trn_closedtask` — tasktype `3`=PICK, picker = Updated User # (`custrecord_wmsse_upd_user_no_clt`), grouped by Actual End Date. Merged into the `warehouse` dataset. |
 | **Receiving** | **Receipts/day** + **On-time %** | Item Receipts (`type='ItemRcpt'`); on-time = receipt `trandate` ≤ source PO `duedate` via `tl.createdfrom` (due date on ~⅓ of lines). Merged into the `warehouse` dataset. |
 | **Inventory** | Count schedule / compliance | saved search `customsearch_sc_count_date_ss` |
+| **Inventory** | **Accuracy %** | `dataset=invaccuracy` + folded into `warehouse.inv_accuracy_pct` (weekly). = 1 − \|Inventory Adjustment value\| ÷ current inventory value; dollar-normalized (avg cost → last purchase price). Native `InvAdjst` — **no SmartCount permission needed** (the blocked `customsearch_sc_count_variances_report` is avoided). |
+| **Production** | **Material Yield / Scrap variance** | `dataset=materialyield`. Per finished-good class + component UoM: actual issued (`quantityshiprecv`) vs BOM standard (`ABS(quantity)` scaled to units built) on Work Orders. yield% = standard ÷ actual; loss% = over-consumption. Real variance exists (597/4827 lines diverge — not pure backflush). Straw tile shows straw FG classes; Bottling tile shows the rest. |
 
 ## Finished-goods class IDs (production split)
 From `CustomClassDefaultViewResults232.csv`:
@@ -42,8 +44,12 @@ SuiteQL visibility is gated by the **token's role**. The role must have:
 - REST Web Services, SuiteAnalytics Workbook, Log in using Access Tokens
 
 ## Pending
-- **Inventory Accuracy / variance** — `customsearch_sc_count_variances_report` is on the SmartCount **"Item Count"** record and still returns `INSUFFICIENT_PERMISSION`. Add that record (and any SmartCount-specific permission) to the token's role; then wire the variance % (counted vs system qty).
 - **OEE / Throughput / Quality / Machine Uptime** (Bottling & Straw) — need MES/shop-floor data (downtime, run rates, good/defect counts). Not in NetSuite; stay flagged "pending MES".
+
+## Resolved (were pending, now live — 2026-07-13)
+- **Inventory Accuracy** — done WITHOUT the blocked SmartCount search. Sourced from native Inventory Adjustments (the count-reconciliation output), dollar-normalized. Warehouse dataset now emits per-week `inv_accuracy_pct`, so the existing warehouse mapper + Inventory Accuracy tile/trend light up on deploy. Standalone detail at `dataset=invaccuracy`.
+- **Material Yield / Scrap variance** — done from Work Order component actual-vs-standard (`dataset=materialyield`). Straw + Bottling Material Yield tiles + the "by FG class" chart wired in index.html. Verified vs sandbox: Syrups 108%, Toppings 113%, PHA 100%, overall 100.6%.
+- Both unblocked by shop-floor MES learnings (SmartCount layout, BOM/phantom explosion, FG item-class roles, account SuiteQL quirks). Prototyped against sandbox `6494782_SB1` (schema copy of live); the SuiteQL transfers 1:1.
 
 ## Deploy / update
 ```
