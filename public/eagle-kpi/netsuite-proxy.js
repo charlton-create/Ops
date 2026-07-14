@@ -316,10 +316,24 @@ module.exports = async (req, res) => {
       // grouped by the COUNT's month (not the adjustment's — they can differ), + count-driven $.
       const variedSql = "SELECT TO_CHAR(src.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT src.id||'-'||al.item) AS varied, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY TO_CHAR(src.trandate,'YYYY-MM')";
       const eventsSql = "SELECT COUNT(*) AS counts, SUM(CASE WHEN vc.cnt>0 THEN 1 ELSE 0 END) AS with_var FROM inventorycount ic LEFT JOIN (SELECT aml.createdfrom AS src_id, COUNT(*) AS cnt FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' WHERE a.type='InvAdjst' AND aml.createdfrom IS NOT NULL GROUP BY aml.createdfrom) vc ON vc.src_id=ic.id";
-      const [lineRows, variedRows, evRows, ivRows] = await Promise.all([
+      // Inventory Turns = trailing-12mo COGS ÷ average inventory value.
+      //   COGS = postings to the "Cost of Goods Sold" account tree (excludes Freight +
+      //          Inventory-Adjustment COGS accounts — those aren't cost of FG sold).
+      //   Average inventory = (beginning + ending) ÷ 2 of the Inventory asset GL balance
+      //          (Inventory : Inventory* accounts), beginning = balance 12 months ago.
+      const y1 = new Date(); const start12 = (y1.getFullYear() - 1) + "-" + String(y1.getMonth() + 1).padStart(2, "0") + "-" + String(y1.getDate()).padStart(2, "0");
+      const cogsSql = `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD')`;
+      const invBalSql = (before) => `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Inventory : Inventory%' AND t.posting='T'${before ? ` AND t.trandate<TO_DATE('${start12}','YYYY-MM-DD')` : ""}`;
+      const [lineRows, variedRows, evRows, ivRows, cogsRows, endRows, begRows] = await Promise.all([
         suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
         suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
+        suiteql(cogsSql, creds, 1000, 4).catch(() => []), suiteql(invBalSql(false), creds, 1000, 4).catch(() => []), suiteql(invBalSql(true), creds, 1000, 4).catch(() => []),
       ]);
+      const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
+      const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
+      const avgInv = (endInv + begInv) / 2;
+      const turns = avgInv > 0 && cogs12mo > 0 ? +(cogs12mo / avgInv).toFixed(2) : null;
+      const daysOnHand = turns ? Math.round(365 / turns) : null;
       const byMo = {};
       lineRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.lines = num(r.lines); });
       variedRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.varied = num(r.varied); o.dollar = num(r.dollar); });
@@ -333,8 +347,10 @@ module.exports = async (req, res) => {
         eventAccuracyPct: counts > 0 ? +(100 * (1 - withVar / counts)).toFixed(1) : null,          // % of count events spot-on
         countLines: totLines, variedLines: totVaried, counts, countsWithVariance: withVar,
         dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
+        cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
+        turns, daysOnHand,
         monthly,
-        note: "Inventory Record Accuracy = counted item-lines that matched the system ÷ item-lines counted (native Inventory Counts + the adjustments they created). Dollar variance is count-driven adjustments only.",
+        note: "IRA = counted item-lines that matched ÷ item-lines counted (native Inventory Counts + their adjustments). Turns = trailing-12mo COGS ÷ average inventory value ((beginning+ending)/2 of the Inventory asset GL). Days on Hand = 365 ÷ turns.",
       });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
