@@ -268,60 +268,74 @@ module.exports = async (req, res) => {
   if (ds === "materialyield") {
     try {
       const creds = getCreds();
-      const isFg = (cls) => /-fg| fg$|sno-cone/i.test(String(cls || ""));
+      // Same class-role heuristic as materialdraw so both KPIs treat items identically.
+      const role = (cls) => { const s = String(cls || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
+      const isMaterial = (cls) => { const r = role(cls); return r === "RM" || r === "PKG"; }; // leaf materials only
       const t = new Date();
       const startY = (t.getFullYear() - 1) + "-01-01";
       const endY = t.toISOString().slice(0, 10);
       const scaled = "ABS(cl.quantity) * CASE WHEN ABS(ml.quantity)>0 THEN ml.quantityshiprecv/ABS(ml.quantity) ELSE 0 END";
-      const byClassSql = `SELECT BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(cl.units) AS uom,
-          ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard
-        FROM transaction t
-        JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL
-        JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T'
-        JOIN item im ON im.id=ml.item
-        WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0
-          AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')
-        GROUP BY BUILTIN.DF(im.class), BUILTIN.DF(cl.units)`;
-      const weeklySql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d,
-          ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard
-        FROM transaction t
-        JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL
-        JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T'
-        JOIN item im ON im.id=ml.item
-        WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0
-          AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')
-        GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`;
-      const [clsRows, wkRows] = await Promise.all([suiteql(byClassSql, creds, 1000, 12), suiteql(weeklySql, creds, 1000, 12)]);
-      const classes = clsRows
-        .filter((r) => isFg(r.fg_class))
-        .map((r) => { const a = num(r.actual), s = num(r.standard); return { fgClass: r.fg_class, uom: r.uom, actual: Math.round(a), standard: Math.round(s), lossPct: a > 0 ? +(100 * (a - s) / a).toFixed(1) : 0, yieldPct: a > 0 ? +(100 * s / a).toFixed(1) : null }; })
+      // Group by FINISHED-GOOD class + COMPONENT class + UoM. Sub-assembly component lines
+      // are dropped in JS (role SUB) — phantoms explode to their raws (which show issued>0
+      // on the FG WO and ARE counted), and WO-sourced sub-assemblies are counted on their
+      // own build, so counting the sub-assembly line here would double-count / mislabel it.
+      const cols = "BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(cl.units) AS uom, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(" + scaled + "),2) AS standard";
+      const from = "FROM transaction t INNER JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL INNER JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' INNER JOIN item im ON im.id=ml.item INNER JOIN item ci ON ci.id=cl.item";
+      const where = `WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0 AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
+      const byClassSql = `SELECT ${cols} ${from} ${where} GROUP BY BUILTIN.DF(im.class), BUILTIN.DF(ci.class), BUILTIN.DF(cl.units)`;
+      const weeklySql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(ci.class) AS comp_class, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard ${from} ${where} GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(ci.class)`;
+      const [rawRows, wkRows] = await Promise.all([suiteql(byClassSql, creds, 1000, 12), suiteql(weeklySql, creds, 1000, 12)]);
+      const byClass = {};
+      rawRows.forEach((r) => { if (role(r.fg_class) !== "FG") return; if (!isMaterial(r.comp_class)) return; const k = r.fg_class + "|" + r.uom; const o = byClass[k] || (byClass[k] = { fgClass: r.fg_class, uom: r.uom, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); });
+      const classes = Object.values(byClass)
+        .map((c) => ({ fgClass: c.fgClass, uom: c.uom, actual: Math.round(c.actual), standard: Math.round(c.standard), lossPct: c.actual > 0 ? +(100 * (c.actual - c.standard) / c.actual).toFixed(1) : 0, yieldPct: c.actual > 0 ? +(100 * c.standard / c.actual).toFixed(1) : null }))
         .sort((a, b) => b.actual - a.actual);
-      const weekly = wkRows.map((r) => { const a = num(r.actual), s = num(r.standard); return { wk: r.wk, d: r.d, actual: Math.round(a), standard: Math.round(s), yieldPct: a > 0 ? +(100 * s / a).toFixed(1) : null }; }).sort((a, b) => a.d < b.d ? -1 : 1);
+      const wkMap = {};
+      wkRows.forEach((r) => { if (!isMaterial(r.comp_class)) return; const o = wkMap[r.wk] || (wkMap[r.wk] = { wk: r.wk, d: r.d, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); if (r.d < o.d) o.d = r.d; });
+      const weekly = Object.values(wkMap).map((w) => ({ wk: w.wk, d: w.d, actual: Math.round(w.actual), standard: Math.round(w.standard), yieldPct: w.actual > 0 ? +(100 * w.standard / w.actual).toFixed(1) : null })).sort((a, b) => a.d < b.d ? -1 : 1);
       const tA = classes.reduce((n, c) => n + c.actual, 0), tS = classes.reduce((n, c) => n + c.standard, 0);
-      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tA > 0 ? +(100 * tS / tA).toFixed(1) : null, actualTotal: Math.round(tA), standardTotal: Math.round(tS), classes, weekly, note: "Actual component consumption (issued) vs BOM standard scaled to units built, on Work Orders, by finished-good class + UoM. yield% = standard ÷ actual; loss% = (actual−standard) ÷ actual (over-consumption)." });
+      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tA > 0 ? +(100 * tS / tA).toFixed(1) : null, actualTotal: Math.round(tA), standardTotal: Math.round(tS), classes, weekly, note: "Actual component consumption (issued) vs BOM standard scaled to units built, on finished-good Work Orders — RM + packaging only. Sub-assemblies are treated as phantoms (their leaf materials are counted, not the sub-assembly item). yield% = standard ÷ actual; loss% = over-consumption." });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
   // Inventory Accuracy — dollar-based from native Inventory Adjustments (the count
   // reconciliation output): accuracy% = 1 − |adjustment value| ÷ current inventory value.
   // Dollar-normalized so mixed UoM don't distort it.
+  // Inventory Accuracy — count-based Inventory Record Accuracy (IRA), the standard
+  // metric: of the item-lines physically counted, what % matched the system (needed
+  // no adjustment). Native Inventory Counts + the Inventory Adjustments they produce
+  // (adjustment header `createdfrom` = the count; item detail on its mainline='F' lines).
+  // NOT the dollar-variance method — that could exceed inventory value and go negative,
+  // and it lumped in build/receipt/scrap adjustments that aren't count discrepancies.
   if (ds === "invaccuracy") {
     try {
       const creds = getCreds();
-      const invValRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4);
-      const iv = num(invValRows[0] && invValRows[0].val);
-      const t = new Date();
-      const start = new Date(t.getTime() - 182 * 86400000).toISOString().slice(0, 10); // ~26 weeks
-      const wkSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d,
-          ROUND(SUM(ABS(tl.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS adjval, COUNT(DISTINCT t.id) AS adjustments
-        FROM transaction t JOIN transactionline tl ON tl.transaction=t.id JOIN item i ON i.id=tl.item
-        WHERE t.type='InvAdjst' AND tl.item IS NOT NULL AND tl.mainline='F'
-          AND t.trandate>=TO_DATE('${start}','YYYY-MM-DD')
-        GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`;
-      const wkRows = await suiteql(wkSql, creds, 1000, 8);
-      const weekly = wkRows.map((r) => { const av = num(r.adjval); return { wk: r.wk, d: r.d, adjVal: Math.round(av), adjustments: num(r.adjustments), accuracyPct: iv > 0 ? +(100 * (1 - av / iv)).toFixed(2) : null }; }).sort((a, b) => a.d < b.d ? -1 : 1);
-      const totalAdj = weekly.reduce((n, w) => n + w.adjVal, 0);
-      res.status(200).json({ dataset: "invaccuracy", inventoryValue: Math.round(iv), totalAdjValue: Math.round(totalAdj), currentAccuracyPct: iv > 0 ? +(100 * (1 - totalAdj / iv)).toFixed(2) : null, weekly, note: "Accuracy% = 1 − |inventory adjustment value| ÷ current inventory value (dollar-normalized). Source: native Inventory Adjustments — the count-reconciliation output." });
+      // distinct (count, item) pairs counted — the COUNTQUANTITY lines — by count month
+      const linesSql = "SELECT TO_CHAR(t.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT t.id||'-'||tl.item) AS lines FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY TO_CHAR(t.trandate,'YYYY-MM')";
+      // distinct (count, item) pairs that VARIED (a count-sourced adjustment corrected them),
+      // grouped by the COUNT's month (not the adjustment's — they can differ), + count-driven $.
+      const variedSql = "SELECT TO_CHAR(src.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT src.id||'-'||al.item) AS varied, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY TO_CHAR(src.trandate,'YYYY-MM')";
+      const eventsSql = "SELECT COUNT(*) AS counts, SUM(CASE WHEN vc.cnt>0 THEN 1 ELSE 0 END) AS with_var FROM inventorycount ic LEFT JOIN (SELECT aml.createdfrom AS src_id, COUNT(*) AS cnt FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' WHERE a.type='InvAdjst' AND aml.createdfrom IS NOT NULL GROUP BY aml.createdfrom) vc ON vc.src_id=ic.id";
+      const [lineRows, variedRows, evRows, ivRows] = await Promise.all([
+        suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
+        suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
+      ]);
+      const byMo = {};
+      lineRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.lines = num(r.lines); });
+      variedRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.varied = num(r.varied); o.dollar = num(r.dollar); });
+      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, dollarVariance: Math.round(o.dollar), accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
+      const totLines = monthly.reduce((n, o) => n + o.lines, 0), totVaried = monthly.reduce((n, o) => n + o.varied, 0), totDollar = monthly.reduce((n, o) => n + o.dollarVariance, 0);
+      const counts = num(evRows[0] && evRows[0].counts), withVar = num(evRows[0] && evRows[0].with_var);
+      const iv = num(ivRows[0] && ivRows[0].val);
+      res.status(200).json({
+        dataset: "invaccuracy",
+        accuracyPct: totLines > 0 ? +(100 * (1 - totVaried / totLines)).toFixed(1) : null,       // headline: line-level IRA
+        eventAccuracyPct: counts > 0 ? +(100 * (1 - withVar / counts)).toFixed(1) : null,          // % of count events spot-on
+        countLines: totLines, variedLines: totVaried, counts, countsWithVariance: withVar,
+        dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
+        monthly,
+        note: "Inventory Record Accuracy = counted item-lines that matched the system ÷ item-lines counted (native Inventory Counts + the adjustments they created). Dollar variance is count-driven adjustments only.",
+      });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
@@ -363,6 +377,8 @@ module.exports = async (req, res) => {
       let rcptRows = [], rcptErr = null;
       try { rcptRows = await suiteql(rcptSql, creds); } catch (e) { rcptErr = e.message; }
       rcptRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.receipts_total = Number(r.receipts) || 0; o.receipt_lines_due = Number(r.due) || 0; o.receipt_lines_ontime = Number(r.ontime) || 0; });
+      // (Inventory accuracy is its own dataset now — the count-based IRA metric at
+      //  ?dataset=invaccuracy, not a per-date dollar figure folded in here.)
       const data = Object.values(byDate).sort((a, b) => (a.date < b.date ? -1 : 1));
       const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80)), rcptErr && ("receiving unavailable: " + rcptErr.slice(0, 80))].filter(Boolean);
       res.status(200).json({ dataset: ds, source: "netsuite", range: { start, end }, count: data.length, data, note: notes.length ? notes.join(" | ") : undefined });
