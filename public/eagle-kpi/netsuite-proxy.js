@@ -301,23 +301,41 @@ module.exports = async (req, res) => {
   // Inventory Accuracy — dollar-based from native Inventory Adjustments (the count
   // reconciliation output): accuracy% = 1 − |adjustment value| ÷ current inventory value.
   // Dollar-normalized so mixed UoM don't distort it.
+  // Inventory Accuracy — count-based Inventory Record Accuracy (IRA), the standard
+  // metric: of the item-lines physically counted, what % matched the system (needed
+  // no adjustment). Native Inventory Counts + the Inventory Adjustments they produce
+  // (adjustment header `createdfrom` = the count; item detail on its mainline='F' lines).
+  // NOT the dollar-variance method — that could exceed inventory value and go negative,
+  // and it lumped in build/receipt/scrap adjustments that aren't count discrepancies.
   if (ds === "invaccuracy") {
     try {
       const creds = getCreds();
-      const invValRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4);
-      const iv = num(invValRows[0] && invValRows[0].val);
-      const t = new Date();
-      const start = new Date(t.getTime() - 182 * 86400000).toISOString().slice(0, 10); // ~26 weeks
-      const wkSql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d,
-          ROUND(SUM(ABS(tl.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS adjval, COUNT(DISTINCT t.id) AS adjustments
-        FROM transaction t JOIN transactionline tl ON tl.transaction=t.id JOIN item i ON i.id=tl.item
-        WHERE t.type='InvAdjst' AND tl.item IS NOT NULL AND tl.mainline='F'
-          AND t.trandate>=TO_DATE('${start}','YYYY-MM-DD')
-        GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`;
-      const wkRows = await suiteql(wkSql, creds, 1000, 8);
-      const weekly = wkRows.map((r) => { const av = num(r.adjval); return { wk: r.wk, d: r.d, adjVal: Math.round(av), adjustments: num(r.adjustments), accuracyPct: iv > 0 ? +(100 * (1 - av / iv)).toFixed(2) : null }; }).sort((a, b) => a.d < b.d ? -1 : 1);
-      const totalAdj = weekly.reduce((n, w) => n + w.adjVal, 0);
-      res.status(200).json({ dataset: "invaccuracy", inventoryValue: Math.round(iv), totalAdjValue: Math.round(totalAdj), currentAccuracyPct: iv > 0 ? +(100 * (1 - totalAdj / iv)).toFixed(2) : null, weekly, note: "Accuracy% = 1 − |inventory adjustment value| ÷ current inventory value (dollar-normalized). Source: native Inventory Adjustments — the count-reconciliation output." });
+      // distinct (count, item) pairs counted — the COUNTQUANTITY lines — by count month
+      const linesSql = "SELECT TO_CHAR(t.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT t.id||'-'||tl.item) AS lines FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY TO_CHAR(t.trandate,'YYYY-MM')";
+      // distinct (count, item) pairs that VARIED (a count-sourced adjustment corrected them),
+      // grouped by the COUNT's month (not the adjustment's — they can differ), + count-driven $.
+      const variedSql = "SELECT TO_CHAR(src.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT src.id||'-'||al.item) AS varied, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY TO_CHAR(src.trandate,'YYYY-MM')";
+      const eventsSql = "SELECT COUNT(*) AS counts, SUM(CASE WHEN vc.cnt>0 THEN 1 ELSE 0 END) AS with_var FROM inventorycount ic LEFT JOIN (SELECT aml.createdfrom AS src_id, COUNT(*) AS cnt FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' WHERE a.type='InvAdjst' AND aml.createdfrom IS NOT NULL GROUP BY aml.createdfrom) vc ON vc.src_id=ic.id";
+      const [lineRows, variedRows, evRows, ivRows] = await Promise.all([
+        suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
+        suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
+      ]);
+      const byMo = {};
+      lineRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.lines = num(r.lines); });
+      variedRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.varied = num(r.varied); o.dollar = num(r.dollar); });
+      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, dollarVariance: Math.round(o.dollar), accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
+      const totLines = monthly.reduce((n, o) => n + o.lines, 0), totVaried = monthly.reduce((n, o) => n + o.varied, 0), totDollar = monthly.reduce((n, o) => n + o.dollarVariance, 0);
+      const counts = num(evRows[0] && evRows[0].counts), withVar = num(evRows[0] && evRows[0].with_var);
+      const iv = num(ivRows[0] && ivRows[0].val);
+      res.status(200).json({
+        dataset: "invaccuracy",
+        accuracyPct: totLines > 0 ? +(100 * (1 - totVaried / totLines)).toFixed(1) : null,       // headline: line-level IRA
+        eventAccuracyPct: counts > 0 ? +(100 * (1 - withVar / counts)).toFixed(1) : null,          // % of count events spot-on
+        countLines: totLines, variedLines: totVaried, counts, countsWithVariance: withVar,
+        dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
+        monthly,
+        note: "Inventory Record Accuracy = counted item-lines that matched the system ÷ item-lines counted (native Inventory Counts + the adjustments they created). Dollar variance is count-driven adjustments only.",
+      });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
@@ -359,19 +377,10 @@ module.exports = async (req, res) => {
       let rcptRows = [], rcptErr = null;
       try { rcptRows = await suiteql(rcptSql, creds); } catch (e) { rcptErr = e.message; }
       rcptRows.forEach((r) => { const o = byDate[r.d] = byDate[r.d] || { date: r.d }; o.receipts_total = Number(r.receipts) || 0; o.receipt_lines_due = Number(r.due) || 0; o.receipt_lines_ontime = Number(r.ontime) || 0; });
-      // Inventory accuracy (dollar-based from Inventory Adjustments) — weekly %, stamped
-      // onto each date so the warehouse mapper's per-date inv_accuracy_pct lights up.
-      let accErr = null;
-      try {
-        const ivRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4);
-        const iv = num(ivRows[0] && ivRows[0].val);
-        const adjWk = await suiteql(`SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, ROUND(SUM(ABS(tl.quantity * NVL(i.averagecost,i.lastpurchaseprice)))) AS adjval FROM transaction t JOIN transactionline tl ON tl.transaction=t.id JOIN item i ON i.id=tl.item WHERE t.type='InvAdjst' AND tl.item IS NOT NULL AND tl.mainline='F' AND t.trandate BETWEEN TO_DATE('${start}','YYYY-MM-DD') AND TO_DATE('${end}','YYYY-MM-DD') GROUP BY TO_CHAR(t.trandate,'IYYY-IW')`, creds);
-        const accByWk = {}; adjWk.forEach((r) => { accByWk[r.wk] = iv > 0 ? +(100 * (1 - num(r.adjval) / iv)).toFixed(2) : null; });
-        const isoWeek = (ymd) => { const d = new Date(ymd + "T00:00:00Z"); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day + 3); const first = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); const wk = 1 + Math.round(((d - first) / 86400000 - 3 + ((first.getUTCDay() + 6) % 7)) / 7); return d.getUTCFullYear() + "-" + String(wk).padStart(2, "0"); };
-        Object.values(byDate).forEach((o) => { const a = accByWk[isoWeek(o.date)]; o.inv_accuracy_pct = a != null ? a : (iv > 0 ? 100 : null); });
-      } catch (e) { accErr = e.message; }
+      // (Inventory accuracy is its own dataset now — the count-based IRA metric at
+      //  ?dataset=invaccuracy, not a per-date dollar figure folded in here.)
       const data = Object.values(byDate).sort((a, b) => (a.date < b.date ? -1 : 1));
-      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80)), rcptErr && ("receiving unavailable: " + rcptErr.slice(0, 80)), accErr && ("inventory accuracy unavailable: " + accErr.slice(0, 80))].filter(Boolean);
+      const notes = [otErr && ("on-time unavailable: " + otErr.slice(0, 80)), fillErr && ("fill-rate unavailable: " + fillErr.slice(0, 80)), pickErr && ("pick productivity unavailable: " + pickErr.slice(0, 80)), rcptErr && ("receiving unavailable: " + rcptErr.slice(0, 80))].filter(Boolean);
       res.status(200).json({ dataset: ds, source: "netsuite", range: { start, end }, count: data.length, data, note: notes.length ? notes.join(" | ") : undefined });
       return;
     }
