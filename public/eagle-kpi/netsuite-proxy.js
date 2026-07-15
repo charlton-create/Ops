@@ -306,73 +306,88 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
-  // Inventory Accuracy — dollar-based from native Inventory Adjustments (the count
-  // reconciliation output): accuracy% = 1 − |adjustment value| ÷ current inventory value.
-  // Dollar-normalized so mixed UoM don't distort it.
-  // Inventory Accuracy — count-based Inventory Record Accuracy (IRA), the standard
-  // metric: of the item-lines physically counted, what % matched the system (needed
-  // no adjustment). Native Inventory Counts + the Inventory Adjustments they produce
-  // (adjustment header `createdfrom` = the count; item detail on its mainline='F' lines).
-  // NOT the dollar-variance method — that could exceed inventory value and go negative,
-  // and it lumped in build/receipt/scrap adjustments that aren't count discrepancies.
+  // Inventory Accuracy — bin-item-line IRA per Eagle's definition:
+  //   accuracy = accurate counted (bin,item) lines ÷ total counted (bin,item) lines.
+  // Each native Inventory Count line-triplet (SNAPSHOT/COUNT/ADJUSTED) is ONE (item,bin);
+  // the bin lives on inventoryassignment (join ia.transactionline = tl.id). A counted
+  // (count,item,bin) is INACCURATE iff its ADJUSTEDQUANTITY line != 0 (off-by-anything).
+  // Paired per (count,item,bin) so book-only phantom bins don't push varied past counted.
+  // Classified by the bin's DEPARTMENT: Warehouse* = inventory control (the IRA execs
+  // want); *Production = continuous-manufacturing scrap/waste, reported separately (a
+  // count variance there is material consumed mid-flow, not a record error).
   if (ds === "invaccuracy") {
     try {
       const creds = getCreds();
-      // distinct (count, item) pairs counted — the COUNTQUANTITY lines — by count month
-      const linesSql = "SELECT TO_CHAR(t.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT t.id||'-'||tl.item) AS lines FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY TO_CHAR(t.trandate,'YYYY-MM')";
-      // distinct (count, item) pairs that VARIED (a count-sourced adjustment corrected them),
-      // grouped by the COUNT's month (not the adjustment's — they can differ), + count-driven $.
-      const variedSql = "SELECT TO_CHAR(src.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT src.id||'-'||al.item) AS varied, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY TO_CHAR(src.trandate,'YYYY-MM')";
-      const eventsSql = "SELECT COUNT(*) AS counts, SUM(CASE WHEN vc.cnt>0 THEN 1 ELSE 0 END) AS with_var FROM inventorycount ic LEFT JOIN (SELECT aml.createdfrom AS src_id, COUNT(*) AS cnt FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' WHERE a.type='InvAdjst' AND aml.createdfrom IS NOT NULL GROUP BY aml.createdfrom) vc ON vc.src_id=ic.id";
-      // Inventory Turns = trailing-12mo COGS ÷ average inventory value.
-      //   COGS = postings to the "Cost of Goods Sold" account tree (excludes Freight +
-      //          Inventory-Adjustment COGS accounts — those aren't cost of FG sold).
-      //   Average inventory = (beginning + ending) ÷ 2 of the Inventory asset GL balance
-      //          (Inventory : Inventory* accounts), beginning = balance 12 months ago.
+      // Every count line (COUNTQUANTITY + its ADJUSTEDQUANTITY), with the bin it sits in.
+      const lineSql = "SELECT tl.transaction AS txn, TO_CHAR(t.trandate,'YYYY-MM') AS mo, tl.item AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL";
+      // bin -> Department + WMS zone (field id differs by account: prod custrecord_department,
+      // sandbox custrecordname — try each). Department is the classifier; zone is the fallback.
+      const loadBins = async () => {
+        for (const col of ["custrecord_department", "custrecordname"]) {
+          try { return await suiteql(`SELECT id, BUILTIN.DF(${col}) AS dept, BUILTIN.DF(custrecord_wmsse_zone) AS zone FROM bin`, creds, 1000, 4); }
+          catch (e) { /* wrong field id for this account — try the other */ }
+        }
+        return [];
+      };
+      // Inventory Turns = trailing-12mo COGS ÷ average inventory value (unchanged).
       const y1 = new Date(); const start12 = (y1.getFullYear() - 1) + "-" + String(y1.getMonth() + 1).padStart(2, "0") + "-" + String(y1.getDate()).padStart(2, "0");
       const cogsSql = `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD')`;
       const invBalSql = (before) => `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Inventory : Inventory%' AND t.posting='T'${before ? ` AND t.trandate<TO_DATE('${start12}','YYYY-MM-DD')` : ""}`;
-      // Split counted + varied lines by DEPARTMENT category — Warehouse* → inventory
-      // control (the real IRA), *Production → scrap/yield, blank → unclassified. Uses the
-      // fast queryable transaction department (not the slow bin/zone join).
-      const countedDeptSql = "SELECT BUILTIN.DF(tl.department) AS dept, COUNT(DISTINCT t.id||'-'||tl.item) AS n FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY BUILTIN.DF(tl.department)";
-      const variedDeptSql = "SELECT BUILTIN.DF(al.department) AS dept, COUNT(DISTINCT src.id||'-'||al.item) AS n, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY BUILTIN.DF(al.department)";
-      const [lineRows, variedRows, evRows, ivRows, cogsRows, endRows, begRows, cDeptRows, vDeptRows] = await Promise.all([
-        suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
+      const [lineRows, binRows, ivRows, cogsRows, endRows, begRows] = await Promise.all([
+        suiteql(lineSql, creds, 1000, 12),
+        loadBins(),
         suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
         suiteql(cogsSql, creds, 1000, 4).catch(() => []), suiteql(invBalSql(false), creds, 1000, 4).catch(() => []), suiteql(invBalSql(true), creds, 1000, 4).catch(() => []),
-        suiteql(countedDeptSql, creds, 1000, 8).catch(() => []), suiteql(variedDeptSql, creds, 1000, 8).catch(() => []),
       ]);
       const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
       const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
       const avgInv = (endInv + begInv) / 2;
       const turns = avgInv > 0 && cogs12mo > 0 ? +(cogs12mo / avgInv).toFixed(2) : null;
       const daysOnHand = turns ? Math.round(365 / turns) : null;
-      const byMo = {};
-      lineRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.lines = num(r.lines); });
-      variedRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.varied = num(r.varied); o.dollar = num(r.dollar); });
-      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, dollarVariance: Math.round(o.dollar), accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
-      const totLines = monthly.reduce((n, o) => n + o.lines, 0), totVaried = monthly.reduce((n, o) => n + o.varied, 0), totDollar = monthly.reduce((n, o) => n + o.dollarVariance, 0);
-      const counts = num(evRows[0] && evRows[0].counts), withVar = num(evRows[0] && evRows[0].with_var);
       const iv = num(ivRows[0] && ivRows[0].val);
-      // department-category rollup
-      const catOf = (d) => { const s = String(d || "").toLowerCase(); if (!s) return "unclassified"; if (s.indexOf("warehouse") >= 0) return "control"; if (s.indexOf("production") >= 0) return "scrap"; return "other"; };
-      const cats = { control: { c: 0, v: 0, d: 0 }, scrap: { c: 0, v: 0, d: 0 }, unclassified: { c: 0, v: 0, d: 0 }, other: { c: 0, v: 0, d: 0 } };
-      cDeptRows.forEach((r) => { cats[catOf(r.dept)].c += num(r.n); });
-      vDeptRows.forEach((r) => { const k = cats[catOf(r.dept)]; k.v += num(r.n); k.d += num(r.dollar); });
-      const catOut = (k) => ({ countLines: k.c, variedLines: k.v, dollarVariance: Math.round(k.d), accuracyPct: k.c > 0 ? +(100 * (1 - k.v / k.c)).toFixed(1) : null });
+      // bin -> category. Department first (Warehouse* = control, *Production = scrap),
+      // WMS zone as fallback; no bin or no signal = unclassified.
+      const binMap = {}; binRows.forEach((b) => { binMap[String(b.id)] = { dept: b.dept || "", zone: b.zone || "" }; });
+      const catOf = (binid) => {
+        if (binid == null) return "unclassified";
+        const b = binMap[String(binid)] || {};
+        const d = String(b.dept || "").toLowerCase();
+        if (d.indexOf("warehouse") >= 0) return "control";
+        if (d.indexOf("production") >= 0) return "scrap";
+        const z = String(b.zone || "").toLowerCase();
+        if (!z) return "unclassified";
+        if (/production|bottling|blend|prep|wip|\bqc\b/.test(z)) return "scrap";
+        if (/warehouse|rack|floor|dock|storage|cold|k59/.test(z)) return "control";
+        return "unclassified";
+      };
+      // Pair counted vs varied per (count,item,bin); a counted bin-item is inaccurate iff varied.
+      const counted = new Map(); const varied = new Set();
+      lineRows.forEach((r) => {
+        if (r.binid == null) return;
+        const k = r.txn + "|" + r.item + "|" + r.binid;
+        if (r.ty === "COUNTQUANTITY") counted.set(k, { cat: catOf(r.binid), mo: r.mo });
+        else if (num(r.qq) !== 0) varied.add(k);
+      });
+      const cats = { control: { c: 0, v: 0 }, scrap: { c: 0, v: 0 }, unclassified: { c: 0, v: 0 } };
+      const byMo = {}; // warehouse (control) monthly trend
+      counted.forEach((v, k) => {
+        const bad = varied.has(k) ? 1 : 0; cats[v.cat].c++; cats[v.cat].v += bad;
+        if (v.cat === "control") { const o = byMo[v.mo] = byMo[v.mo] || { mo: v.mo, lines: 0, varied: 0 }; o.lines++; o.varied += bad; }
+      });
+      const catOut = (k) => ({ countLines: k.c, variedLines: k.v, accuracyPct: k.c > 0 ? +(100 * (1 - k.v / k.c)).toFixed(1) : null });
       const categories = { control: catOut(cats.control), scrap: catOut(cats.scrap), unclassified: catOut(cats.unclassified) };
+      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
+      const totC = cats.control.c + cats.scrap.c + cats.unclassified.c, totV = cats.control.v + cats.scrap.v + cats.unclassified.v;
       res.status(200).json({
         dataset: "invaccuracy",
-        accuracyPct: totLines > 0 ? +(100 * (1 - totVaried / totLines)).toFixed(1) : null,       // headline: line-level IRA
-        eventAccuracyPct: counts > 0 ? +(100 * (1 - withVar / counts)).toFixed(1) : null,          // % of count events spot-on
-        countLines: totLines, variedLines: totVaried, counts, countsWithVariance: withVar,
-        dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
+        accuracyPct: totC > 0 ? +(100 * (1 - totV / totC)).toFixed(1) : null,   // all-zones blend (fallback label)
+        countLines: totC, variedLines: totV,
+        inventoryValue: Math.round(iv),
         cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
         turns, daysOnHand,
-        categories,
-        monthly,
-        note: "IRA = counted item-lines that matched ÷ item-lines counted (native Inventory Counts + their adjustments). Turns = trailing-12mo COGS ÷ average inventory value ((beginning+ending)/2 of the Inventory asset GL). Days on Hand = 365 ÷ turns.",
+        categories,   // control = Warehouse IRA (headline); scrap = production waste; unclassified = no bin/dept
+        monthly,      // warehouse (control) monthly trend
+        note: "Inventory Accuracy = accurate counted (bin,item) lines / counted (bin,item) lines, paired per count; off-by-anything = inaccurate. control = Warehouse IRA (headline). scrap = production zones — a count variance there is continuous-manufacturing waste, reported separately, not accuracy. Turns = 12mo COGS / avg inventory.",
       });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
