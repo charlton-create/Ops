@@ -322,14 +322,10 @@ module.exports = async (req, res) => {
   if (ds === "invaccuracy") {
     try {
       const creds = getCreds();
-      // Accuracy is scoped to the dashboard's Week/Month/Quarter/Year selector (?from&to)
-      // by the count date; turns/days-on-hand stay trailing-12mo (annualized metrics).
-      const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
-      const fromD = isDate(req.query && req.query.from) ? req.query.from : null;
-      const toD = isDate(req.query && req.query.to) ? req.query.to : null;
-      const drCount = (fromD && toD) ? ` AND t.trandate>=TO_DATE('${fromD}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${toD}','YYYY-MM-DD')` : "";
+      // Inventory Accuracy is an all-time running metric — cycle counts are sparse, so
+      // slicing to a single Week/Month empties the trend. NOT period-scoped (turns stay 12mo).
       // Every count line (COUNTQUANTITY + its ADJUSTEDQUANTITY), with the bin it sits in.
-      const lineSql = "SELECT tl.transaction AS txn, TO_CHAR(t.trandate,'YYYY-MM') AS mo, tl.item AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL" + drCount;
+      const lineSql = "SELECT tl.transaction AS txn, TO_CHAR(t.trandate,'YYYY-MM') AS mo, tl.item AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL";
       // bin -> Department + WMS zone (field id differs by account: prod custrecord_department,
       // sandbox custrecordname — try each). Department is the classifier; zone is the fallback.
       const loadBins = async () => {

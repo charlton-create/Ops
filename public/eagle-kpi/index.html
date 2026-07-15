@@ -1011,7 +1011,6 @@ async function refreshYield(){const r=periodRange();
   // both at once exceeds NetSuite's per-token concurrency cap (429) and silently drops
   // the refresh. One at a time stays under the limit so the period switch actually lands.
   try{const yr=await fetch(`/api/netsuite?dataset=materialyield&from=${r.start}&to=${r.end}`);const yj=await yr.json().catch(()=>({}));if(yr.ok&&yj.classes){STATE.materialyield=yj;renderYieldTiles('yld-bot','bottling');renderYieldTiles('yld-str','straw');}}catch(e){}
-  try{const ir=await fetch(`/api/netsuite?dataset=invaccuracy&from=${r.start}&to=${r.end}`);const ij=await ir.json().catch(()=>({}));if(ir.ok&&ij.accuracyPct!=null){STATE.invaccuracy=ij;renderWarehouse();}}catch(e){}
   persist();const lbl=periodLabel(),bd=document.getElementById('yld-bot-desc'),sd=document.getElementById('yld-str-desc');if(bd)bd.textContent='Net product weight ÷ ingredient weight · '+lbl;if(sd)sd.textContent='Beverage-only material utilization · '+lbl;}
 function renderAll(){renderBottling();renderStraw();renderMaterial();renderWarehouse();}
 function setSource(type,label){STATE.source=type;STATE.sourceLabel=label;const pill=document.getElementById('srcPill');pill.className='src-pill '+type;document.getElementById('srcText').textContent=label;}
@@ -1055,7 +1054,7 @@ async function fetchFromNetSuite(silent){
   try{const pr=await fetch(`/api/netsuite?dataset=poaging`);const pj=await pr.json().catch(()=>({}));if(pr.ok&&pj.tiers){STATE.poaging=pj;}}catch(e){}
   try{const mr=await fetch(`/api/netsuite?dataset=materialdraw`);const mj=await mr.json().catch(()=>({}));if(mr.ok&&mj.lines){STATE.materialdraw=mj;}}catch(e){}
   try{const _yr=periodRange();const yr=await fetch(`/api/netsuite?dataset=materialyield&from=${_yr.start}&to=${_yr.end}`);const yj=await yr.json().catch(()=>({}));if(yr.ok&&yj.classes){STATE.materialyield=yj;}}catch(e){}
-  try{const _ir=periodRange();const ir=await fetch(`/api/netsuite?dataset=invaccuracy&from=${_ir.start}&to=${_ir.end}`);const ij=await ir.json().catch(()=>({}));if(ir.ok&&ij.accuracyPct!=null){STATE.invaccuracy=ij;}}catch(e){}
+  try{const ir=await fetch(`/api/netsuite?dataset=invaccuracy`);const ij=await ir.json().catch(()=>({}));if(ir.ok&&ij.accuracyPct!=null){STATE.invaccuracy=ij;}}catch(e){}
   if(total>0){
     setSource('netsuite','NetSuite · live');persist();
     setNsStatus(errs.length?'work':'ok',`${errs.length?ICO_INFO:ICO_CHECK}Synced ${total} rows from NetSuite${errs.length?` — note: ${errs.join('; ')}`:''}.`);
