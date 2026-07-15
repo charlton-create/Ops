@@ -366,19 +366,26 @@ module.exports = async (req, res) => {
         if (/warehouse|rack|floor|dock|storage|cold|k59/.test(z)) return "control";
         return "unclassified";
       };
-      // Pair counted vs varied per (count,item,bin); a counted bin-item is inaccurate iff varied.
-      const counted = new Map(); const varied = new Set();
+      // 2% variance acceptance (tunable via ?tol=, 0..1): a counted bin-item is accurate
+      // when |adjustment| is within TOL of book (book = counted − adjustment). Small,
+      // within-tolerance discrepancies don't fail the line. Paired per (count,item,bin).
+      const TOL = (() => { const t = Number(req.query && req.query.tol); return (isFinite(t) && t >= 0 && t < 1) ? t : 0.02; })();
+      const rec = new Map(); // (count,item,bin) -> { cat, mo, cnt, adj }
       lineRows.forEach((r) => {
         if (r.binid == null) return;
         const k = r.txn + "|" + r.item + "|" + r.binid;
-        if (r.ty === "COUNTQUANTITY") counted.set(k, { cat: catOf(r.binid), mo: r.mo });
-        else if (num(r.qq) !== 0) varied.add(k);
+        const o = rec.get(k) || { cat: null, mo: null, cnt: null, adj: 0 };
+        if (r.ty === "COUNTQUANTITY") { o.cat = catOf(r.binid); o.mo = r.mo; o.cnt = num(r.qq); }
+        else { o.adj = num(r.qq); }
+        rec.set(k, o);
       });
+      const isBad = (o) => { const book = Math.abs(o.cnt - o.adj); return book === 0 ? Math.abs(o.adj) > 0 : (Math.abs(o.adj) / book) > TOL; };
       const cats = { control: { c: 0, v: 0 }, scrap: { c: 0, v: 0 }, unclassified: { c: 0, v: 0 } };
       const byMo = {}; // warehouse (control) monthly trend
-      counted.forEach((v, k) => {
-        const bad = varied.has(k) ? 1 : 0; cats[v.cat].c++; cats[v.cat].v += bad;
-        if (v.cat === "control") { const o = byMo[v.mo] = byMo[v.mo] || { mo: v.mo, lines: 0, varied: 0 }; o.lines++; o.varied += bad; }
+      rec.forEach((o) => {
+        if (o.cnt == null) return; // only counted bin-items are in the denominator
+        const bad = isBad(o) ? 1 : 0; cats[o.cat].c++; cats[o.cat].v += bad;
+        if (o.cat === "control") { const m = byMo[o.mo] = byMo[o.mo] || { mo: o.mo, lines: 0, varied: 0 }; m.lines++; m.varied += bad; }
       });
       const catOut = (k) => ({ countLines: k.c, variedLines: k.v, accuracyPct: k.c > 0 ? +(100 * (1 - k.v / k.c)).toFixed(1) : null });
       const categories = { control: catOut(cats.control), scrap: catOut(cats.scrap), unclassified: catOut(cats.unclassified) };
@@ -391,9 +398,10 @@ module.exports = async (req, res) => {
         inventoryValue: Math.round(iv),
         cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
         turns, daysOnHand,
+        varianceTolerancePct: +(TOL * 100).toFixed(2),
         categories,   // control = Warehouse IRA (headline); scrap = production waste; unclassified = no bin/dept
         monthly,      // warehouse (control) monthly trend
-        note: "Inventory Accuracy = accurate counted (bin,item) lines / counted (bin,item) lines, paired per count; off-by-anything = inaccurate. control = Warehouse IRA (headline). scrap = production zones — a count variance there is continuous-manufacturing waste, reported separately, not accuracy. Turns = 12mo COGS / avg inventory.",
+        note: `Inventory Accuracy = accurate counted (bin,item) lines / counted (bin,item) lines, paired per count; a line is accurate when its adjustment is within ${+(TOL * 100).toFixed(2)}% of book (?tol= to tune). control = Warehouse IRA (headline). scrap = production zones — a count variance there is continuous-manufacturing waste, reported separately, not accuracy. Turns = 12mo COGS / avg inventory.`,
       });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
