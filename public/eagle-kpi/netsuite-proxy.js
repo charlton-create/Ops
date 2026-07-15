@@ -421,6 +421,29 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
+  // Count Audit — read-only diagnostic: raw counted-vs-book per (count,item,bin) line with
+  // the UoM each count was entered in, so we can see whether low IRA is real gaps or a
+  // unit problem (e.g., same item counted in Case some sessions, Each others). ?cat=control
+  // (default) | scrap | unclassified, ?limit=N (default 200), worst variance first.
+  if (ds === "countaudit") {
+    try {
+      const creds = getCreds();
+      const rows = await suiteql("SELECT tl.transaction AS txn, BUILTIN.DF(tl.item) AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, BUILTIN.DF(tl.units) AS uom, TO_CHAR(t.trandate,'YYYY-MM-DD') AS d, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL", creds, 1000, 12);
+      let binRows = [];
+      for (const col of ["custrecord_department", "custrecordname"]) { try { binRows = await suiteql(`SELECT id, BUILTIN.DF(${col}) AS dept, BUILTIN.DF(custrecord_wmsse_zone) AS zone FROM bin`, creds, 1000, 4); break; } catch (e) { /* try other field id */ } }
+      const binMap = {}; binRows.forEach((b) => { binMap[String(b.id)] = { dept: b.dept || "", zone: b.zone || "" }; });
+      const catOf = (binid) => { if (binid == null) return "unclassified"; const b = binMap[String(binid)] || {}; const dd = String(b.dept || "").toLowerCase(); if (dd.indexOf("warehouse") >= 0) return "control"; if (dd.indexOf("production") >= 0) return "scrap"; const z = String(b.zone || "").toLowerCase(); if (!z) return "unclassified"; if (/production|bottling|blend|prep|wip|\bqc\b/.test(z)) return "scrap"; if (/warehouse|rack|floor|dock|storage|cold|k59/.test(z)) return "control"; return "unclassified"; };
+      const rec = {};
+      rows.forEach((r) => { if (r.binid == null) return; const k = r.txn + "|" + r.item + "|" + r.binid; const o = rec[k] || (rec[k] = { item: r.item, uom: r.uom, d: r.d, zone: (binMap[String(r.binid)] || {}).zone, cat: catOf(r.binid), cnt: null, adj: 0 }); if (r.ty === "COUNTQUANTITY") { o.cnt = num(r.qq); o.uom = r.uom; } else { o.adj = num(r.qq); } });
+      const cat = String((req.query && req.query.cat) || "control");
+      const limit = Number(req.query && req.query.limit) || 200;
+      const list = Object.values(rec).filter((o) => o.cnt != null && o.cat === cat && num(o.adj) !== 0).map((o) => { const book = o.cnt - o.adj; const vp = book !== 0 ? +(100 * Math.abs(o.adj) / Math.abs(book)).toFixed(1) : null; return { item: o.item, uom: o.uom, counted: o.cnt, book: +book.toFixed(2), adjustment: o.adj, variancePct: vp, zone: o.zone, date: o.d }; }).sort((a, b) => (b.variancePct || 0) - (a.variancePct || 0));
+      const uomByItem = {}; list.forEach((l) => { (uomByItem[l.item] = uomByItem[l.item] || new Set()).add(l.uom); });
+      const mixedUnitItems = Object.keys(uomByItem).filter((k) => uomByItem[k].size > 1);
+      res.status(200).json({ dataset: "countaudit", category: cat, totalVariedLines: list.length, mixedUnitItems, lines: list.slice(0, limit), note: "Read-only audit of counted vs book by (count,item,bin). uom = unit the count was entered in. mixedUnitItems = items counted in more than one unit (likely miscounts). variancePct = |adjustment| / book." });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
   if (!DEFAULTS[ds]) {
     res.status(400).json({ error: `unknown dataset "${ds}" (bottling|straw|warehouse)` });
     return;
