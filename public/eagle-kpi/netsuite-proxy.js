@@ -289,7 +289,11 @@ module.exports = async (req, res) => {
       const linkSql = `SELECT t.id AS child, tl.createdfrom AS parent FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.mainline='T' WHERE t.type='WorkOrd' AND tl.createdfrom IS NOT NULL`;
       // Component consumption per WO (any WO — we roll up the relevant ones in JS).
       const consSql = `SELECT tl.transaction AS wo, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(tl.units) AS uom, ROUND(SUM(tl.quantityshiprecv),2) AS qty FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN item ci ON ci.id=tl.item WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.quantityshiprecv>0 AND tl.item IS NOT NULL AND ${dr} GROUP BY tl.transaction, BUILTIN.DF(ci.class), BUILTIN.DF(tl.units)`;
-      const [fgRows, linkRows, consRows] = await Promise.all([suiteql(fgSql, creds, 1000, 12), suiteql(linkSql, creds, 1000, 12), suiteql(consSql, creds, 1000, 30)]);
+      // Sequential (not Promise.all) — one SuiteQL slot at a time stays under NetSuite's
+      // per-token concurrency cap so the request doesn't 429 under dashboard load.
+      const fgRows = await suiteql(fgSql, creds, 1000, 12);
+      const linkRows = await suiteql(linkSql, creds, 1000, 12);
+      const consRows = await suiteql(consSql, creds, 1000, 30);
       // ingredient lbs consumed per WO (RM + water; exclude packaging / sub-assembly / FG / obsolete)
       const consByWo = {};
       consRows.forEach((r) => { const rr = role(r.comp_class); if (rr === "PKG" || rr === "SUB" || rr === "FG" || rr === "OBS") return; const l = toLbs(r.uom, num(r.qty)); if (l == null) return; consByWo[r.wo] = (consByWo[r.wo] || 0) + l; });
@@ -339,12 +343,14 @@ module.exports = async (req, res) => {
       const y1 = new Date(); const start12 = (y1.getFullYear() - 1) + "-" + String(y1.getMonth() + 1).padStart(2, "0") + "-" + String(y1.getDate()).padStart(2, "0");
       const cogsSql = `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD')`;
       const invBalSql = (before) => `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Inventory : Inventory%' AND t.posting='T'${before ? ` AND t.trandate<TO_DATE('${start12}','YYYY-MM-DD')` : ""}`;
-      const [lineRows, binRows, ivRows, cogsRows, endRows, begRows] = await Promise.all([
-        suiteql(lineSql, creds, 1000, 12),
-        loadBins(),
-        suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
-        suiteql(cogsSql, creds, 1000, 4).catch(() => []), suiteql(invBalSql(false), creds, 1000, 4).catch(() => []), suiteql(invBalSql(true), creds, 1000, 4).catch(() => []),
-      ]);
+      // Sequential (not Promise.all) — one SuiteQL slot at a time stays under NetSuite's
+      // per-token concurrency cap so the request doesn't 429 under dashboard load.
+      const lineRows = await suiteql(lineSql, creds, 1000, 12);
+      const binRows = await loadBins();
+      const ivRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4).catch(() => []);
+      const cogsRows = await suiteql(cogsSql, creds, 1000, 4).catch(() => []);
+      const endRows = await suiteql(invBalSql(false), creds, 1000, 4).catch(() => []);
+      const begRows = await suiteql(invBalSql(true), creds, 1000, 4).catch(() => []);
       const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
       const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
       const avgInv = (endInv + begInv) / 2;
@@ -379,7 +385,16 @@ module.exports = async (req, res) => {
         else { o.adj = num(r.qq); }
         rec.set(k, o);
       });
-      const isBad = (o) => { const book = Math.abs(o.cnt - o.adj); return book === 0 ? Math.abs(o.adj) > 0 : (Math.abs(o.adj) / book) > TOL; };
+      // Warehouse stock is discrete (a bobbin/case/bottle isn't partly used on the rack),
+      // so round counted + book to whole units before comparing — a decimal/UoM-conversion
+      // artifact can't fail a warehouse line. Production keeps fractional (liquid/ingredient
+      // consumption in lb/gal is genuinely fractional). Then apply the variance tolerance.
+      const isBad = (o) => {
+        let cnt = o.cnt, book = o.cnt - o.adj;
+        if (o.cat === "control") { cnt = Math.round(cnt); book = Math.round(book); }
+        const denom = Math.abs(book);
+        return denom === 0 ? Math.abs(cnt) > 0 : (Math.abs(cnt - book) / denom) > TOL;
+      };
       const cats = { control: { c: 0, v: 0 }, scrap: { c: 0, v: 0 }, unclassified: { c: 0, v: 0 } };
       const byMo = {}; // warehouse (control) monthly trend
       rec.forEach((o) => {
