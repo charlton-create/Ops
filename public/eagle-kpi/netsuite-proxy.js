@@ -329,10 +329,16 @@ module.exports = async (req, res) => {
       const y1 = new Date(); const start12 = (y1.getFullYear() - 1) + "-" + String(y1.getMonth() + 1).padStart(2, "0") + "-" + String(y1.getDate()).padStart(2, "0");
       const cogsSql = `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD')`;
       const invBalSql = (before) => `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Inventory : Inventory%' AND t.posting='T'${before ? ` AND t.trandate<TO_DATE('${start12}','YYYY-MM-DD')` : ""}`;
-      const [lineRows, variedRows, evRows, ivRows, cogsRows, endRows, begRows] = await Promise.all([
+      // Split counted + varied lines by DEPARTMENT category — Warehouse* → inventory
+      // control (the real IRA), *Production → scrap/yield, blank → unclassified. Uses the
+      // fast queryable transaction department (not the slow bin/zone join).
+      const countedDeptSql = "SELECT BUILTIN.DF(tl.department) AS dept, COUNT(DISTINCT t.id||'-'||tl.item) AS n FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY BUILTIN.DF(tl.department)";
+      const variedDeptSql = "SELECT BUILTIN.DF(al.department) AS dept, COUNT(DISTINCT src.id||'-'||al.item) AS n, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY BUILTIN.DF(al.department)";
+      const [lineRows, variedRows, evRows, ivRows, cogsRows, endRows, begRows, cDeptRows, vDeptRows] = await Promise.all([
         suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
         suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
         suiteql(cogsSql, creds, 1000, 4).catch(() => []), suiteql(invBalSql(false), creds, 1000, 4).catch(() => []), suiteql(invBalSql(true), creds, 1000, 4).catch(() => []),
+        suiteql(countedDeptSql, creds, 1000, 8).catch(() => []), suiteql(variedDeptSql, creds, 1000, 8).catch(() => []),
       ]);
       const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
       const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
@@ -346,6 +352,13 @@ module.exports = async (req, res) => {
       const totLines = monthly.reduce((n, o) => n + o.lines, 0), totVaried = monthly.reduce((n, o) => n + o.varied, 0), totDollar = monthly.reduce((n, o) => n + o.dollarVariance, 0);
       const counts = num(evRows[0] && evRows[0].counts), withVar = num(evRows[0] && evRows[0].with_var);
       const iv = num(ivRows[0] && ivRows[0].val);
+      // department-category rollup
+      const catOf = (d) => { const s = String(d || "").toLowerCase(); if (!s) return "unclassified"; if (s.indexOf("warehouse") >= 0) return "control"; if (s.indexOf("production") >= 0) return "scrap"; return "other"; };
+      const cats = { control: { c: 0, v: 0, d: 0 }, scrap: { c: 0, v: 0, d: 0 }, unclassified: { c: 0, v: 0, d: 0 }, other: { c: 0, v: 0, d: 0 } };
+      cDeptRows.forEach((r) => { cats[catOf(r.dept)].c += num(r.n); });
+      vDeptRows.forEach((r) => { const k = cats[catOf(r.dept)]; k.v += num(r.n); k.d += num(r.dollar); });
+      const catOut = (k) => ({ countLines: k.c, variedLines: k.v, dollarVariance: Math.round(k.d), accuracyPct: k.c > 0 ? +(100 * (1 - k.v / k.c)).toFixed(1) : null });
+      const categories = { control: catOut(cats.control), scrap: catOut(cats.scrap), unclassified: catOut(cats.unclassified) };
       res.status(200).json({
         dataset: "invaccuracy",
         accuracyPct: totLines > 0 ? +(100 * (1 - totVaried / totLines)).toFixed(1) : null,       // headline: line-level IRA
@@ -354,6 +367,7 @@ module.exports = async (req, res) => {
         dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
         cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
         turns, daysOnHand,
+        categories,
         monthly,
         note: "IRA = counted item-lines that matched ÷ item-lines counted (native Inventory Counts + their adjustments). Turns = trailing-12mo COGS ÷ average inventory value ((beginning+ending)/2 of the Inventory asset GL). Days on Hand = 365 ÷ turns.",
       });
