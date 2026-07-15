@@ -262,39 +262,44 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
-  // Material Yield / Scrap variance — WO component ACTUAL issued (quantityshiprecv) vs
-  // STANDARD (BOM required qty scaled to the qty actually built), by FINISHED-GOOD class
-  // and component UoM (never sum across UoM). yield% = standard/actual; loss = actual-standard.
+  // Material Yield — BEVERAGE material UTILIZATION: net product weight (finished liquid,
+  // packaging excluded) ÷ weight of ingredients consumed, ×100, by finished-good class.
+  //   product lbs   = eaches built × FG container gallons (custitem_blend_total_gallons) × 8.33333 lb/gal
+  //   ingredient lbs = RM + water (non-packaging, non-sub-assembly) consumed, in lbs
+  //                    (Pound as-is, Gallon ×8.33333), ROLLED UP across the FG WO AND its child
+  //                    blend WOs — historical WO-driven builds consume ingredients on the blend
+  //                    WO, phantom builds on the FG WO; the rollup captures both.
+  //   Straws/cutlery (Cases) are excluded — this utilization applies to liquid beverage only.
   if (ds === "materialyield") {
     try {
       const creds = getCreds();
-      // Same class-role heuristic as materialdraw so both KPIs treat items identically.
-      const role = (cls) => { const s = String(cls || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
-      const isMaterial = (cls) => { const r = role(cls); return r === "RM" || r === "PKG"; }; // leaf materials only
+      const G = 8.333333;
+      const role = (c) => { const s = String(c || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
+      const toLbs = (uom, q) => { const u = String(uom || "").toLowerCase(); return (u === "pound" || u === "lbs") ? q : ((u === "gallon" || u === "gal") ? q * G : null); };
       const t = new Date();
       const startY = (t.getFullYear() - 1) + "-01-01";
       const endY = t.toISOString().slice(0, 10);
-      const scaled = "ABS(cl.quantity) * CASE WHEN ABS(ml.quantity)>0 THEN ml.quantityshiprecv/ABS(ml.quantity) ELSE 0 END";
-      // Group by FINISHED-GOOD class + COMPONENT class + UoM. Sub-assembly component lines
-      // are dropped in JS (role SUB) — phantoms explode to their raws (which show issued>0
-      // on the FG WO and ARE counted), and WO-sourced sub-assemblies are counted on their
-      // own build, so counting the sub-assembly line here would double-count / mislabel it.
-      const cols = "BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(cl.units) AS uom, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(" + scaled + "),2) AS standard";
-      const from = "FROM transaction t INNER JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL INNER JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' INNER JOIN item im ON im.id=ml.item INNER JOIN item ci ON ci.id=cl.item";
-      const where = `WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0 AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
-      const byClassSql = `SELECT ${cols} ${from} ${where} GROUP BY BUILTIN.DF(im.class), BUILTIN.DF(ci.class), BUILTIN.DF(cl.units)`;
-      const weeklySql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(ci.class) AS comp_class, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard ${from} ${where} GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(ci.class)`;
-      const [rawRows, wkRows] = await Promise.all([suiteql(byClassSql, creds, 1000, 12), suiteql(weeklySql, creds, 1000, 12)]);
+      const dr = `t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
+      // Beverage FG builds (container gallons set) -> net product weight per WO.
+      const fgSql = `SELECT t.id AS wo, BUILTIN.DF(im.class) AS fg_class, ROUND(ml.quantityshiprecv*im.custitem_blend_total_gallons*${G},2) AS product_lbs FROM transaction t JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' JOIN item im ON im.id=ml.item JOIN classification imc ON imc.id=im.class WHERE t.type='WorkOrd' AND ml.quantityshiprecv>0 AND im.custitem_blend_total_gallons>0 AND imc.fullname LIKE 'Beverage%' AND ${dr}`;
+      // Child WO links (blend sub-assembly WOs point to their parent via createdfrom).
+      const linkSql = `SELECT t.id AS child, tl.createdfrom AS parent FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.mainline='T' WHERE t.type='WorkOrd' AND tl.createdfrom IS NOT NULL`;
+      // Component consumption per WO (any WO — we roll up the relevant ones in JS).
+      const consSql = `SELECT tl.transaction AS wo, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(tl.units) AS uom, ROUND(SUM(tl.quantityshiprecv),2) AS qty FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN item ci ON ci.id=tl.item WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.quantityshiprecv>0 AND tl.item IS NOT NULL AND ${dr} GROUP BY tl.transaction, BUILTIN.DF(ci.class), BUILTIN.DF(tl.units)`;
+      const [fgRows, linkRows, consRows] = await Promise.all([suiteql(fgSql, creds, 1000, 12), suiteql(linkSql, creds, 1000, 12), suiteql(consSql, creds, 1000, 30)]);
+      // ingredient lbs consumed per WO (RM + water; exclude packaging / sub-assembly / FG / obsolete)
+      const consByWo = {};
+      consRows.forEach((r) => { const rr = role(r.comp_class); if (rr === "PKG" || rr === "SUB" || rr === "FG" || rr === "OBS") return; const l = toLbs(r.uom, num(r.qty)); if (l == null) return; consByWo[r.wo] = (consByWo[r.wo] || 0) + l; });
+      const kids = {};
+      linkRows.forEach((r) => { (kids[r.parent] = kids[r.parent] || []).push(String(r.child)); });
+      const gather = (wo, seen) => { seen = seen || {}; if (seen[wo]) return 0; seen[wo] = 1; let s = consByWo[wo] || 0; (kids[wo] || []).forEach((c) => { s += gather(c, seen); }); return s; };
       const byClass = {};
-      rawRows.forEach((r) => { if (role(r.fg_class) !== "FG") return; if (!isMaterial(r.comp_class)) return; const k = r.fg_class + "|" + r.uom; const o = byClass[k] || (byClass[k] = { fgClass: r.fg_class, uom: r.uom, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); });
-      const classes = Object.values(byClass)
-        .map((c) => ({ fgClass: c.fgClass, uom: c.uom, actual: Math.round(c.actual), standard: Math.round(c.standard), lossPct: c.actual > 0 ? +(100 * (c.actual - c.standard) / c.actual).toFixed(1) : 0, yieldPct: c.actual > 0 ? +(100 * c.standard / c.actual).toFixed(1) : null }))
-        .sort((a, b) => b.actual - a.actual);
-      const wkMap = {};
-      wkRows.forEach((r) => { if (!isMaterial(r.comp_class)) return; const o = wkMap[r.wk] || (wkMap[r.wk] = { wk: r.wk, d: r.d, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); if (r.d < o.d) o.d = r.d; });
-      const weekly = Object.values(wkMap).map((w) => ({ wk: w.wk, d: w.d, actual: Math.round(w.actual), standard: Math.round(w.standard), yieldPct: w.actual > 0 ? +(100 * w.standard / w.actual).toFixed(1) : null })).sort((a, b) => a.d < b.d ? -1 : 1);
-      const tA = classes.reduce((n, c) => n + c.actual, 0), tS = classes.reduce((n, c) => n + c.standard, 0);
-      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tA > 0 ? +(100 * tS / tA).toFixed(1) : null, actualTotal: Math.round(tA), standardTotal: Math.round(tS), classes, weekly, note: "Actual component consumption (issued) vs BOM standard scaled to units built, on finished-good Work Orders — RM + packaging only. Sub-assemblies are treated as phantoms (their leaf materials are counted, not the sub-assembly item). yield% = standard ÷ actual; loss% = over-consumption." });
+      fgRows.forEach((r) => { if (role(r.fg_class) !== "FG") return; const o = byClass[r.fg_class] || (byClass[r.fg_class] = { fgClass: r.fg_class, productLbs: 0, ingredientLbs: 0 }); o.productLbs += num(r.product_lbs); o.ingredientLbs += gather(String(r.wo)); });
+      const classes = Object.values(byClass).filter((c) => c.ingredientLbs > 0)
+        .map((c) => ({ fgClass: c.fgClass, uom: "lbs", productLbs: Math.round(c.productLbs), ingredientLbs: Math.round(c.ingredientLbs), actual: Math.round(c.ingredientLbs), standard: Math.round(c.productLbs), yieldPct: +(100 * c.productLbs / c.ingredientLbs).toFixed(1), lossPct: +(100 * (1 - c.productLbs / c.ingredientLbs)).toFixed(1) }))
+        .sort((a, b) => b.productLbs - a.productLbs);
+      const tP = classes.reduce((n, c) => n + c.productLbs, 0), tI = classes.reduce((n, c) => n + c.ingredientLbs, 0);
+      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tI > 0 ? +(100 * tP / tI).toFixed(1) : null, productLbs: Math.round(tP), ingredientLbs: Math.round(tI), actualTotal: Math.round(tI), standardTotal: Math.round(tP), classes, weekly: [], note: "Beverage material utilization: net product weight (eaches built x container gallons x 8.33333 lb/gal) / ingredient weight consumed (RM + water, packaging excluded), rolled up across the FG WO + its blend WOs. yield% = product / ingredient. Straws & cutlery (Cases) not applicable." });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
