@@ -351,12 +351,24 @@ module.exports = async (req, res) => {
       const cogsRows = await suiteql(cogsSql, creds, 1000, 4).catch(() => []);
       const endRows = await suiteql(invBalSql(false), creds, 1000, 4).catch(() => []);
       const begRows = await suiteql(invBalSql(true), creds, 1000, 4).catch(() => []);
+      // Turns by Item Class: 12mo COGS (posted, item→class) ÷ current inventory value by class.
+      const invClassRows = await suiteql("SELECT BUILTIN.DF(i.class) AS cls, ROUND(SUM(ib.quantityonhand*NVL(i.averagecost,i.lastpurchaseprice))) AS v FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0 GROUP BY BUILTIN.DF(i.class)", creds, 1000, 4).catch(() => []);
+      const cogsClassRows = await suiteql(`SELECT BUILTIN.DF(i.class) AS cls, ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account JOIN item i ON i.id=tl.item WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD') GROUP BY BUILTIN.DF(i.class)`, creds, 1000, 4).catch(() => []);
       const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
       const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
       const avgInv = (endInv + begInv) / 2;
       const turns = avgInv > 0 && cogs12mo > 0 ? +(cogs12mo / avgInv).toFixed(2) : null;
       const daysOnHand = turns ? Math.round(365 / turns) : null;
       const iv = num(ivRows[0] && ivRows[0].val);
+      // Turns by class (uses current inventory value, not avg — per-class beginning balance
+      // isn't obtainable). null turns = dead stock (inventory but no 12mo COGS).
+      const invByCls = {}, cogsByCls = {};
+      invClassRows.forEach((r) => { invByCls[r.cls || "(unclassified)"] = num(r.v); });
+      cogsClassRows.forEach((r) => { cogsByCls[r.cls || "(unclassified)"] = num(r.v); });
+      const turnsByClass = Array.from(new Set([...Object.keys(invByCls), ...Object.keys(cogsByCls)])).map((cls) => {
+        const inv = invByCls[cls] || 0, cg = cogsByCls[cls] || 0; const tn = inv > 0 && cg > 0 ? +(cg / inv).toFixed(2) : null;
+        return { class: cls, cogs12mo: Math.round(cg), inventoryValue: Math.round(inv), turns: tn, daysOnHand: tn ? Math.round(365 / tn) : null };
+      }).filter((x) => x.inventoryValue > 0 || x.cogs12mo > 0).sort((a, b) => b.cogs12mo - a.cogs12mo);
       // bin -> category. Department first (Warehouse* = control, *Production = scrap),
       // WMS zone as fallback; no bin or no signal = unclassified.
       const binMap = {}; binRows.forEach((b) => { binMap[String(b.id)] = { dept: b.dept || "", zone: b.zone || "" }; });
@@ -412,7 +424,7 @@ module.exports = async (req, res) => {
         countLines: totC, variedLines: totV,
         inventoryValue: Math.round(iv),
         cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
-        turns, daysOnHand,
+        turns, daysOnHand, turnsByClass,   // turnsByClass: 12mo COGS / current inventory value, per item class
         varianceTolerancePct: +(TOL * 100).toFixed(2),
         categories,   // control = Warehouse IRA (headline); scrap = production waste; unclassified = no bin/dept
         monthly,      // warehouse (control) monthly trend
