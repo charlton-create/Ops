@@ -276,9 +276,12 @@ module.exports = async (req, res) => {
       const G = 8.333333;
       const role = (c) => { const s = String(c || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
       const toLbs = (uom, q) => { const u = String(uom || "").toLowerCase(); return (u === "pound" || u === "lbs") ? q : ((u === "gallon" || u === "gal") ? q * G : null); };
+      // Period-scoped by the dashboard's Week/Month/Quarter/Year selector (?from&to);
+      // defaults to last-year-to-today when unspecified.
       const t = new Date();
-      const startY = (t.getFullYear() - 1) + "-01-01";
-      const endY = t.toISOString().slice(0, 10);
+      const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+      const startY = isDate(req.query && req.query.from) ? req.query.from : (t.getFullYear() - 1) + "-01-01";
+      const endY = isDate(req.query && req.query.to) ? req.query.to : t.toISOString().slice(0, 10);
       const dr = `t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
       // Beverage FG builds (container gallons set) -> net product weight per WO.
       const fgSql = `SELECT t.id AS wo, BUILTIN.DF(im.class) AS fg_class, ROUND(ml.quantityshiprecv*im.custitem_blend_total_gallons*${G},2) AS product_lbs FROM transaction t JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' JOIN item im ON im.id=ml.item JOIN classification imc ON imc.id=im.class WHERE t.type='WorkOrd' AND ml.quantityshiprecv>0 AND im.custitem_blend_total_gallons>0 AND imc.fullname LIKE 'Beverage%' AND ${dr}`;
