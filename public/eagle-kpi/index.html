@@ -1004,10 +1004,13 @@ document.getElementById('wiTabs').addEventListener('click',e=>{if(e.target.tagNa
 function periodLabel(){const v=STATE.periodValue,y=new Date().getFullYear();if(STATE.period==='week')return 'Week '+v;if(STATE.period==='month')return (MONTHS[v]||'')+' '+y;if(STATE.period==='quarter')return 'Q'+v+' '+y;return String(v);}
 // Material Yield is a live NetSuite rollup — refetch it for the selected period so the
 // tiles + trend follow Week/Month/Quarter/Year like the CSV-based KPIs do.
-async function refreshYield(){const r=periodRange();await Promise.all([
-  (async()=>{try{const yr=await fetch(`/api/netsuite?dataset=materialyield&from=${r.start}&to=${r.end}`);const yj=await yr.json().catch(()=>({}));if(yr.ok&&yj.classes){STATE.materialyield=yj;}}catch(e){}})(),
-  (async()=>{try{const ir=await fetch(`/api/netsuite?dataset=invaccuracy&from=${r.start}&to=${r.end}`);const ij=await ir.json().catch(()=>({}));if(ir.ok&&ij.accuracyPct!=null){STATE.invaccuracy=ij;}}catch(e){}})()
-]);persist();renderYieldTiles('yld-bot','bottling');renderYieldTiles('yld-str','straw');renderWarehouse();const lbl=periodLabel(),bd=document.getElementById('yld-bot-desc'),sd=document.getElementById('yld-str-desc');if(bd)bd.textContent='Net product weight ÷ ingredient weight · '+lbl;if(sd)sd.textContent='Beverage-only material utilization · '+lbl;}
+async function refreshYield(){const r=periodRange();
+  // Sequential, NOT Promise.all — each dataset fans out several SuiteQL queries; firing
+  // both at once exceeds NetSuite's per-token concurrency cap (429) and silently drops
+  // the refresh. One at a time stays under the limit so the period switch actually lands.
+  try{const yr=await fetch(`/api/netsuite?dataset=materialyield&from=${r.start}&to=${r.end}`);const yj=await yr.json().catch(()=>({}));if(yr.ok&&yj.classes){STATE.materialyield=yj;renderYieldTiles('yld-bot','bottling');renderYieldTiles('yld-str','straw');}}catch(e){}
+  try{const ir=await fetch(`/api/netsuite?dataset=invaccuracy&from=${r.start}&to=${r.end}`);const ij=await ir.json().catch(()=>({}));if(ir.ok&&ij.accuracyPct!=null){STATE.invaccuracy=ij;renderWarehouse();}}catch(e){}
+  persist();const lbl=periodLabel(),bd=document.getElementById('yld-bot-desc'),sd=document.getElementById('yld-str-desc');if(bd)bd.textContent='Net product weight ÷ ingredient weight · '+lbl;if(sd)sd.textContent='Beverage-only material utilization · '+lbl;}
 function renderAll(){renderBottling();renderStraw();renderMaterial();renderWarehouse();}
 function setSource(type,label){STATE.source=type;STATE.sourceLabel=label;const pill=document.getElementById('srcPill');pill.className='src-pill '+type;document.getElementById('srcText').textContent=label;}
 /* ── Persistence + empty states (no demo data) ── */
