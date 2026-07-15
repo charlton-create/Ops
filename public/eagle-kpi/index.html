@@ -474,10 +474,11 @@
             </div>
           </div>
           <div class="kb-card">
-            <div class="kb-card-h"><div class="kb-icon" style="background:#15803d">♻️</div><div><h3>Material Yield</h3><div class="kb-tag">Resin Utilization</div></div></div>
+            <div class="kb-card-h"><div class="kb-icon" style="background:#15803d">♻️</div><div><h3>Material Yield</h3><div class="kb-tag">Beverage Material Utilization</div></div></div>
             <div class="kb-card-b">
-              <div class="kb-block"><div class="kb-label">Why it matters</div><p>Resin is the largest variable cost in straw production. Material yield compares how much resin the standard says a run should use against how much it actually consumed. Anything below 100% is over-consumption from purge, oversized walls, or scrap regrind losses. On thin-margin accessories, a few points of yield is often the difference between a profitable and unprofitable line.</p></div>
-              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Yield =</span> Standard Resin ÷ Actual Resin Used</div><span class="kb-target">Target ≥ 95%</span></div>
+              <div class="kb-block"><div class="kb-label">Why it matters</div><p>For liquid beverages, yield compares the net weight of finished product against the weight of the ingredients consumed to make it. Below 100% is loss — tank heels, purge, overfill, spillage, or QC dumps; near 100% is a tight process. Ingredients are the largest variable cost, so a few points of utilization moves margin directly. Straws &amp; cutlery ship in Cases (no fill weight), so this metric applies to beverage finished goods only.</p></div>
+              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Yield =</span> Net Product Weight ÷ Ingredient Weight Consumed<br>Product lbs = eaches built × container gallons × 8.333 lb/gal<br>Ingredient lbs = RM + water consumed (Pound as-is, Gallon ×8.333)</div><span class="kb-target">On target 95–105%</span></div>
+              <div class="kb-block"><div class="kb-label">Rolled up correctly</div><p>Consumption is summed across the finished-good Work Order <em>and</em> its child blend Work Orders — historical WO-driven builds consume ingredients on the blend WO, phantom builds on the FG WO — so the rollup captures both. Packaging classes are excluded (they're not part of fill yield).</p></div>
             </div>
           </div>
           <div class="kb-card">
@@ -590,17 +591,20 @@
         <div class="kb-cat"><span class="kb-cat-icon">📊</span> Warehouse · Inventory Control</div>
         <div class="kb-grid">
           <div class="kb-card">
-            <div class="kb-card-h"><div class="kb-icon" style="background:#1A56DB">🎯</div><div><h3>Inventory Accuracy</h3><div class="kb-tag">Cycle-Count Accuracy</div></div></div>
+            <div class="kb-card-h"><div class="kb-icon" style="background:#1A56DB">🎯</div><div><h3>Inventory Accuracy</h3><div class="kb-tag">Bin-Item Record Accuracy (IRA)</div></div></div>
             <div class="kb-card-b">
-              <div class="kb-block"><div class="kb-label">Why it matters</div><p>How closely system inventory records match the physical count. Inaccurate inventory is the root of broken promises — planning builds schedules on numbers that aren't real, causing surprise stockouts of caps or resin and emergency expedites. Accuracy is the trust layer the entire supply chain runs on.</p></div>
-              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Accuracy =</span> Locations Matching Count ÷ Locations Counted</div><span class="kb-target">Target ≥ 99.5%</span></div>
+              <div class="kb-block"><div class="kb-label">Why it matters</div><p>How closely system records match the physical count. Inaccurate inventory is the root of broken promises — planning builds schedules on numbers that aren't real, causing surprise stockouts and emergency expedites. Accuracy is the trust layer the whole supply chain runs on.</p></div>
+              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Accuracy =</span> Accurate Counted (Bin, Item) Lines ÷ Counted (Bin, Item) Lines</div><span class="kb-target">Target ≥ 99.5%</span></div>
+              <div class="kb-block"><div class="kb-label">Line-level, with tolerance</div><p>Each counted bin-item is one line; a line is accurate when its count is within a <strong>2% variance tolerance</strong> of book. Warehouse stock is discrete, so counts are compared in whole units (a bobbin/case can't be off by a decimal).</p></div>
+              <div class="kb-block"><div class="kb-label">Warehouse vs. production</div><p>This is <strong>warehouse (storage) zones only</strong> — where stock is at rest. In continuous manufacturing, a count variance in a production zone is material consumed mid-flow, not a record error, so those are reported as <em>Scrap / Waste</em>, never folded into accuracy.</p></div>
             </div>
           </div>
           <div class="kb-card">
             <div class="kb-card-h"><div class="kb-icon" style="background:#0d9488">🔄</div><div><h3>Inventory Turns</h3><div class="kb-tag">Annualized Turnover</div></div></div>
             <div class="kb-card-b">
               <div class="kb-block"><div class="kb-label">Why it matters</div><p>How many times inventory is sold and replaced per year. Beverages have shelf-life and freshness concerns, so faster turns mean fresher product and less cash tied up in stock. Higher turns free up working capital and warehouse space — a direct cash-flow and quality benefit.</p></div>
-              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Turns =</span> Annual COGS ÷ Average Inventory Value</div><span class="kb-target">Target ≥ 11×/yr</span></div>
+              <div class="kb-block"><div class="kb-label">How it's calculated</div><div class="kb-formula"><span class="kb-eq">Turns =</span> Trailing-12mo COGS ÷ Average Inventory Value<br>Average Inventory = (beginning + ending) ÷ 2 of the Inventory asset GL</div><span class="kb-target">Target ≥ 11×/yr</span></div>
+              <div class="kb-block"><div class="kb-label">By Item Class</div><p>Also broken out per item class (12mo COGS ÷ <em>current</em> inventory value — per-class beginning balances aren't obtainable) to separate fast movers from slow ones. A class with inventory but no 12-month COGS shows blank turns — <strong>dead stock</strong> worth investigating.</p></div>
             </div>
           </div>
           <div class="kb-card">
