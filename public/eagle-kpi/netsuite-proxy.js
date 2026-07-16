@@ -452,6 +452,29 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
+  // Item Audit — read-only forensic: item records + their NetSuite system notes (who/when/
+  // what/context) for a list of item names. ?items=A,B,C[&since=YYYY-MM-DD]. Used to trace
+  // unexpected item changes (e.g. a re-imported old item file) to the actor and import job.
+  if (ds === "itemaudit") {
+    try {
+      const creds = getCreds();
+      const raw = String((req.query && req.query.items) || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 60);
+      if (!raw.length) { res.status(400).json({ error: "pass ?items=NAME1,NAME2,…" }); return; }
+      const list = raw.map((s) => `'${s.replace(/'/g, "''")}'`).join(",");
+      const items = await suiteql(`SELECT id, itemid, itemtype, BUILTIN.DF(class) AS cls, isinactive, externalid, TO_CHAR(createddate,'YYYY-MM-DD') AS created, TO_CHAR(lastmodifieddate,'YYYY-MM-DD HH24:MI') AS modified FROM item WHERE itemid IN (${list})`, creds, 1000, 2);
+      const ids = items.map((i) => Number(i.id)).filter(isFinite);
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query && req.query.since || "")) ? String(req.query.since) : null;
+      let notes = [];
+      if (ids.length) {
+        const dr = since ? ` AND sn.date >= TO_DATE('${since}','YYYY-MM-DD')` : "";
+        notes = await suiteql(`SELECT sn.recordid AS item_id, TO_CHAR(sn.date,'YYYY-MM-DD HH24:MI') AS d, sn.name AS user_id, sn.context, BUILTIN.DF(sn.field) AS field, sn.oldvalue, sn.newvalue FROM systemnote sn WHERE sn.recordtypeid = -10 AND sn.recordid IN (${ids.join(",")})${dr} ORDER BY sn.date DESC`, creds, 1000, 12);
+      }
+      const uids = [...new Set(notes.map((n) => Number(n.user_id)).filter(isFinite))];
+      const users = uids.length ? await suiteql(`SELECT id, entityid, email FROM employee WHERE id IN (${uids.join(",")})`, creds, 1000, 2).catch(() => []) : [];
+      res.status(200).json({ dataset: "itemaudit", items, noteCount: notes.length, notes: notes.slice(0, 2000), users });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
   if (!DEFAULTS[ds]) {
     res.status(400).json({ error: `unknown dataset "${ds}" (bottling|straw|warehouse)` });
     return;
