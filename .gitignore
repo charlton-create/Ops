@@ -29,6 +29,11 @@ backend/src/generated/
 **/.env
 **/.env.local
 **/.env.*.local
+Note.env.rtf
+*.env.rtf
+
+# ─── Claude Code (local, machine-specific — may hold secrets) ──────────────────
+.claude/settings.local.json
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
