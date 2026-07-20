@@ -262,96 +262,216 @@ module.exports = async (req, res) => {
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
-  // Material Yield / Scrap variance — WO component ACTUAL issued (quantityshiprecv) vs
-  // STANDARD (BOM required qty scaled to the qty actually built), by FINISHED-GOOD class
-  // and component UoM (never sum across UoM). yield% = standard/actual; loss = actual-standard.
+  // Material Yield — BEVERAGE material UTILIZATION: net product weight (finished liquid,
+  // packaging excluded) ÷ weight of ingredients consumed, ×100, by finished-good class.
+  //   product lbs   = eaches built × FG container gallons (custitem_blend_total_gallons) × 8.33333 lb/gal
+  //   ingredient lbs = RM + water (non-packaging, non-sub-assembly) consumed, in lbs
+  //                    (Pound as-is, Gallon ×8.33333), ROLLED UP across the FG WO AND its child
+  //                    blend WOs — historical WO-driven builds consume ingredients on the blend
+  //                    WO, phantom builds on the FG WO; the rollup captures both.
+  //   Straws/cutlery (Cases) are excluded — this utilization applies to liquid beverage only.
   if (ds === "materialyield") {
     try {
       const creds = getCreds();
-      // Same class-role heuristic as materialdraw so both KPIs treat items identically.
-      const role = (cls) => { const s = String(cls || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
-      const isMaterial = (cls) => { const r = role(cls); return r === "RM" || r === "PKG"; }; // leaf materials only
+      const G = 8.333333;
+      const role = (c) => { const s = String(c || "").toLowerCase(); if (/sub asm/.test(s)) return "SUB"; if (/-fg| fg$|sno-cone/.test(s)) return "FG"; if (/-rm$/.test(s)) return "RM"; if (/pkg/.test(s)) return "PKG"; if (/obsolete/.test(s)) return "OBS"; return "OTHER"; };
+      const toLbs = (uom, q) => { const u = String(uom || "").toLowerCase(); return (u === "pound" || u === "lbs") ? q : ((u === "gallon" || u === "gal") ? q * G : null); };
+      // Period-scoped by the dashboard's Week/Month/Quarter/Year selector (?from&to);
+      // defaults to last-year-to-today when unspecified.
       const t = new Date();
-      const startY = (t.getFullYear() - 1) + "-01-01";
-      const endY = t.toISOString().slice(0, 10);
-      const scaled = "ABS(cl.quantity) * CASE WHEN ABS(ml.quantity)>0 THEN ml.quantityshiprecv/ABS(ml.quantity) ELSE 0 END";
-      // Group by FINISHED-GOOD class + COMPONENT class + UoM. Sub-assembly component lines
-      // are dropped in JS (role SUB) — phantoms explode to their raws (which show issued>0
-      // on the FG WO and ARE counted), and WO-sourced sub-assemblies are counted on their
-      // own build, so counting the sub-assembly line here would double-count / mislabel it.
-      const cols = "BUILTIN.DF(im.class) AS fg_class, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(cl.units) AS uom, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(" + scaled + "),2) AS standard";
-      const from = "FROM transaction t INNER JOIN transactionline cl ON cl.transaction=t.id AND cl.mainline='F' AND cl.item IS NOT NULL INNER JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' INNER JOIN item im ON im.id=ml.item INNER JOIN item ci ON ci.id=cl.item";
-      const where = `WHERE t.type='WorkOrd' AND cl.quantityshiprecv>0 AND t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
-      const byClassSql = `SELECT ${cols} ${from} ${where} GROUP BY BUILTIN.DF(im.class), BUILTIN.DF(ci.class), BUILTIN.DF(cl.units)`;
-      const weeklySql = `SELECT TO_CHAR(t.trandate,'IYYY-IW') AS wk, MIN(TO_CHAR(t.trandate,'YYYY-MM-DD')) AS d, BUILTIN.DF(ci.class) AS comp_class, ROUND(SUM(cl.quantityshiprecv),2) AS actual, ROUND(SUM(${scaled}),2) AS standard ${from} ${where} GROUP BY TO_CHAR(t.trandate,'IYYY-IW'), BUILTIN.DF(ci.class)`;
-      const [rawRows, wkRows] = await Promise.all([suiteql(byClassSql, creds, 1000, 12), suiteql(weeklySql, creds, 1000, 12)]);
+      const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+      const startY = isDate(req.query && req.query.from) ? req.query.from : (t.getFullYear() - 1) + "-01-01";
+      const endY = isDate(req.query && req.query.to) ? req.query.to : t.toISOString().slice(0, 10);
+      const dr = `t.trandate>=TO_DATE('${startY}','YYYY-MM-DD') AND t.trandate<=TO_DATE('${endY}','YYYY-MM-DD')`;
+      // Beverage FG builds (container gallons set) -> net product weight per WO.
+      const fgSql = `SELECT t.id AS wo, BUILTIN.DF(im.class) AS fg_class, ROUND(ml.quantityshiprecv*im.custitem_blend_total_gallons*${G},2) AS product_lbs FROM transaction t JOIN transactionline ml ON ml.transaction=t.id AND ml.mainline='T' JOIN item im ON im.id=ml.item JOIN classification imc ON imc.id=im.class WHERE t.type='WorkOrd' AND ml.quantityshiprecv>0 AND im.custitem_blend_total_gallons>0 AND imc.fullname LIKE 'Beverage%' AND ${dr}`;
+      // Child WO links (blend sub-assembly WOs point to their parent via createdfrom).
+      const linkSql = `SELECT t.id AS child, tl.createdfrom AS parent FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.mainline='T' WHERE t.type='WorkOrd' AND tl.createdfrom IS NOT NULL`;
+      // Component consumption per WO (any WO — we roll up the relevant ones in JS).
+      const consSql = `SELECT tl.transaction AS wo, BUILTIN.DF(ci.class) AS comp_class, BUILTIN.DF(tl.units) AS uom, ROUND(SUM(tl.quantityshiprecv),2) AS qty FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN item ci ON ci.id=tl.item WHERE t.type='WorkOrd' AND tl.mainline='F' AND tl.quantityshiprecv>0 AND tl.item IS NOT NULL AND ${dr} GROUP BY tl.transaction, BUILTIN.DF(ci.class), BUILTIN.DF(tl.units)`;
+      // Sequential (not Promise.all) — one SuiteQL slot at a time stays under NetSuite's
+      // per-token concurrency cap so the request doesn't 429 under dashboard load.
+      const fgRows = await suiteql(fgSql, creds, 1000, 12);
+      const linkRows = await suiteql(linkSql, creds, 1000, 12);
+      const consRows = await suiteql(consSql, creds, 1000, 30);
+      // ingredient lbs consumed per WO (RM + water; exclude packaging / sub-assembly / FG / obsolete)
+      const consByWo = {};
+      consRows.forEach((r) => { const rr = role(r.comp_class); if (rr === "PKG" || rr === "SUB" || rr === "FG" || rr === "OBS") return; const l = toLbs(r.uom, num(r.qty)); if (l == null) return; consByWo[r.wo] = (consByWo[r.wo] || 0) + l; });
+      const kids = {};
+      linkRows.forEach((r) => { (kids[r.parent] = kids[r.parent] || []).push(String(r.child)); });
+      const gather = (wo, seen) => { seen = seen || {}; if (seen[wo]) return 0; seen[wo] = 1; let s = consByWo[wo] || 0; (kids[wo] || []).forEach((c) => { s += gather(c, seen); }); return s; };
       const byClass = {};
-      rawRows.forEach((r) => { if (role(r.fg_class) !== "FG") return; if (!isMaterial(r.comp_class)) return; const k = r.fg_class + "|" + r.uom; const o = byClass[k] || (byClass[k] = { fgClass: r.fg_class, uom: r.uom, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); });
-      const classes = Object.values(byClass)
-        .map((c) => ({ fgClass: c.fgClass, uom: c.uom, actual: Math.round(c.actual), standard: Math.round(c.standard), lossPct: c.actual > 0 ? +(100 * (c.actual - c.standard) / c.actual).toFixed(1) : 0, yieldPct: c.actual > 0 ? +(100 * c.standard / c.actual).toFixed(1) : null }))
-        .sort((a, b) => b.actual - a.actual);
-      const wkMap = {};
-      wkRows.forEach((r) => { if (!isMaterial(r.comp_class)) return; const o = wkMap[r.wk] || (wkMap[r.wk] = { wk: r.wk, d: r.d, actual: 0, standard: 0 }); o.actual += num(r.actual); o.standard += num(r.standard); if (r.d < o.d) o.d = r.d; });
-      const weekly = Object.values(wkMap).map((w) => ({ wk: w.wk, d: w.d, actual: Math.round(w.actual), standard: Math.round(w.standard), yieldPct: w.actual > 0 ? +(100 * w.standard / w.actual).toFixed(1) : null })).sort((a, b) => a.d < b.d ? -1 : 1);
-      const tA = classes.reduce((n, c) => n + c.actual, 0), tS = classes.reduce((n, c) => n + c.standard, 0);
-      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tA > 0 ? +(100 * tS / tA).toFixed(1) : null, actualTotal: Math.round(tA), standardTotal: Math.round(tS), classes, weekly, note: "Actual component consumption (issued) vs BOM standard scaled to units built, on finished-good Work Orders — RM + packaging only. Sub-assemblies are treated as phantoms (their leaf materials are counted, not the sub-assembly item). yield% = standard ÷ actual; loss% = over-consumption." });
+      fgRows.forEach((r) => { if (role(r.fg_class) !== "FG") return; const o = byClass[r.fg_class] || (byClass[r.fg_class] = { fgClass: r.fg_class, productLbs: 0, ingredientLbs: 0 }); o.productLbs += num(r.product_lbs); o.ingredientLbs += gather(String(r.wo)); });
+      const classes = Object.values(byClass).filter((c) => c.ingredientLbs > 0)
+        .map((c) => ({ fgClass: c.fgClass, uom: "lbs", productLbs: Math.round(c.productLbs), ingredientLbs: Math.round(c.ingredientLbs), actual: Math.round(c.ingredientLbs), standard: Math.round(c.productLbs), yieldPct: +(100 * c.productLbs / c.ingredientLbs).toFixed(1), lossPct: +(100 * (1 - c.productLbs / c.ingredientLbs)).toFixed(1) }))
+        .sort((a, b) => b.productLbs - a.productLbs);
+      const tP = classes.reduce((n, c) => n + c.productLbs, 0), tI = classes.reduce((n, c) => n + c.ingredientLbs, 0);
+      res.status(200).json({ dataset: "materialyield", range: { start: startY, end: endY }, overallYieldPct: tI > 0 ? +(100 * tP / tI).toFixed(1) : null, productLbs: Math.round(tP), ingredientLbs: Math.round(tI), actualTotal: Math.round(tI), standardTotal: Math.round(tP), classes, weekly: [], note: "Beverage material utilization: net product weight (eaches built x container gallons x 8.33333 lb/gal) / ingredient weight consumed (RM + water, packaging excluded), rolled up across the FG WO + its blend WOs. yield% = product / ingredient. Straws & cutlery (Cases) not applicable." });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
-  // Inventory Accuracy — dollar-based from native Inventory Adjustments (the count
-  // reconciliation output): accuracy% = 1 − |adjustment value| ÷ current inventory value.
-  // Dollar-normalized so mixed UoM don't distort it.
-  // Inventory Accuracy — count-based Inventory Record Accuracy (IRA), the standard
-  // metric: of the item-lines physically counted, what % matched the system (needed
-  // no adjustment). Native Inventory Counts + the Inventory Adjustments they produce
-  // (adjustment header `createdfrom` = the count; item detail on its mainline='F' lines).
-  // NOT the dollar-variance method — that could exceed inventory value and go negative,
-  // and it lumped in build/receipt/scrap adjustments that aren't count discrepancies.
+  // Inventory Accuracy — bin-item-line IRA per Eagle's definition:
+  //   accuracy = accurate counted (bin,item) lines ÷ total counted (bin,item) lines.
+  // Each native Inventory Count line-triplet (SNAPSHOT/COUNT/ADJUSTED) is ONE (item,bin);
+  // the bin lives on inventoryassignment (join ia.transactionline = tl.id). A counted
+  // (count,item,bin) is INACCURATE iff its ADJUSTEDQUANTITY line != 0 (off-by-anything).
+  // Paired per (count,item,bin) so book-only phantom bins don't push varied past counted.
+  // Classified by the bin's DEPARTMENT: Warehouse* = inventory control (the IRA execs
+  // want); *Production = continuous-manufacturing scrap/waste, reported separately (a
+  // count variance there is material consumed mid-flow, not a record error).
   if (ds === "invaccuracy") {
     try {
       const creds = getCreds();
-      // distinct (count, item) pairs counted — the COUNTQUANTITY lines — by count month
-      const linesSql = "SELECT TO_CHAR(t.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT t.id||'-'||tl.item) AS lines FROM transaction t JOIN transactionline tl ON tl.transaction=t.id AND tl.transactionlinetype='COUNTQUANTITY' AND tl.item IS NOT NULL WHERE t.type='InvCount' GROUP BY TO_CHAR(t.trandate,'YYYY-MM')";
-      // distinct (count, item) pairs that VARIED (a count-sourced adjustment corrected them),
-      // grouped by the COUNT's month (not the adjustment's — they can differ), + count-driven $.
-      const variedSql = "SELECT TO_CHAR(src.trandate,'YYYY-MM') AS mo, COUNT(DISTINCT src.id||'-'||al.item) AS varied, ROUND(SUM(ABS(al.quantity * NVL(i.averagecost, i.lastpurchaseprice)))) AS dollar FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' JOIN transaction src ON src.id=aml.createdfrom AND src.type='InvCount' JOIN transactionline al ON al.transaction=a.id AND al.mainline='F' AND al.item IS NOT NULL JOIN item i ON i.id=al.item WHERE a.type='InvAdjst' GROUP BY TO_CHAR(src.trandate,'YYYY-MM')";
-      const eventsSql = "SELECT COUNT(*) AS counts, SUM(CASE WHEN vc.cnt>0 THEN 1 ELSE 0 END) AS with_var FROM inventorycount ic LEFT JOIN (SELECT aml.createdfrom AS src_id, COUNT(*) AS cnt FROM transaction a JOIN transactionline aml ON aml.transaction=a.id AND aml.mainline='T' WHERE a.type='InvAdjst' AND aml.createdfrom IS NOT NULL GROUP BY aml.createdfrom) vc ON vc.src_id=ic.id";
-      // Inventory Turns = trailing-12mo COGS ÷ average inventory value.
-      //   COGS = postings to the "Cost of Goods Sold" account tree (excludes Freight +
-      //          Inventory-Adjustment COGS accounts — those aren't cost of FG sold).
-      //   Average inventory = (beginning + ending) ÷ 2 of the Inventory asset GL balance
-      //          (Inventory : Inventory* accounts), beginning = balance 12 months ago.
+      // Inventory Accuracy is an all-time running metric — cycle counts are sparse, so
+      // slicing to a single Week/Month empties the trend. NOT period-scoped (turns stay 12mo).
+      // Every count line (COUNTQUANTITY + its ADJUSTEDQUANTITY), with the bin it sits in.
+      const lineSql = "SELECT tl.transaction AS txn, TO_CHAR(t.trandate,'YYYY-MM') AS mo, tl.item AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL";
+      // bin -> Department + WMS zone (field id differs by account: prod custrecord_department,
+      // sandbox custrecordname — try each). Department is the classifier; zone is the fallback.
+      const loadBins = async () => {
+        for (const col of ["custrecord_department", "custrecordname"]) {
+          try { return await suiteql(`SELECT id, BUILTIN.DF(${col}) AS dept, BUILTIN.DF(custrecord_wmsse_zone) AS zone FROM bin`, creds, 1000, 4); }
+          catch (e) { /* wrong field id for this account — try the other */ }
+        }
+        return [];
+      };
+      // Inventory Turns = trailing-12mo COGS ÷ average inventory value (unchanged).
       const y1 = new Date(); const start12 = (y1.getFullYear() - 1) + "-" + String(y1.getMonth() + 1).padStart(2, "0") + "-" + String(y1.getDate()).padStart(2, "0");
       const cogsSql = `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD')`;
       const invBalSql = (before) => `SELECT ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account WHERE a.fullname LIKE 'Inventory : Inventory%' AND t.posting='T'${before ? ` AND t.trandate<TO_DATE('${start12}','YYYY-MM-DD')` : ""}`;
-      const [lineRows, variedRows, evRows, ivRows, cogsRows, endRows, begRows] = await Promise.all([
-        suiteql(linesSql, creds, 1000, 8), suiteql(variedSql, creds, 1000, 8), suiteql(eventsSql, creds, 1000, 2),
-        suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4),
-        suiteql(cogsSql, creds, 1000, 4).catch(() => []), suiteql(invBalSql(false), creds, 1000, 4).catch(() => []), suiteql(invBalSql(true), creds, 1000, 4).catch(() => []),
-      ]);
+      // Sequential (not Promise.all) — one SuiteQL slot at a time stays under NetSuite's
+      // per-token concurrency cap so the request doesn't 429 under dashboard load.
+      const lineRows = await suiteql(lineSql, creds, 1000, 12);
+      const binRows = await loadBins();
+      const ivRows = await suiteql("SELECT ROUND(SUM(ib.quantityonhand * NVL(i.averagecost, i.lastpurchaseprice))) AS val FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0", creds, 1000, 4).catch(() => []);
+      const cogsRows = await suiteql(cogsSql, creds, 1000, 4).catch(() => []);
+      const endRows = await suiteql(invBalSql(false), creds, 1000, 4).catch(() => []);
+      const begRows = await suiteql(invBalSql(true), creds, 1000, 4).catch(() => []);
+      // Turns by Item Class: 12mo COGS (posted, item→class) ÷ current inventory value by class.
+      const invClassRows = await suiteql("SELECT BUILTIN.DF(i.class) AS cls, ROUND(SUM(ib.quantityonhand*NVL(i.averagecost,i.lastpurchaseprice))) AS v FROM inventoryBalance ib JOIN item i ON i.id=ib.item WHERE ib.quantityonhand>0 GROUP BY BUILTIN.DF(i.class)", creds, 1000, 4).catch(() => []);
+      const cogsClassRows = await suiteql(`SELECT BUILTIN.DF(i.class) AS cls, ROUND(SUM(tl.amount)) AS v FROM transactionline tl JOIN transaction t ON t.id=tl.transaction JOIN account a ON a.id=tl.account JOIN item i ON i.id=tl.item WHERE a.fullname LIKE 'Cost of Goods Sold%' AND t.posting='T' AND t.trandate>=TO_DATE('${start12}','YYYY-MM-DD') GROUP BY BUILTIN.DF(i.class)`, creds, 1000, 4).catch(() => []);
       const cogs12mo = num(cogsRows[0] && cogsRows[0].v);
       const endInv = num(endRows[0] && endRows[0].v), begInv = num(begRows[0] && begRows[0].v);
       const avgInv = (endInv + begInv) / 2;
       const turns = avgInv > 0 && cogs12mo > 0 ? +(cogs12mo / avgInv).toFixed(2) : null;
       const daysOnHand = turns ? Math.round(365 / turns) : null;
-      const byMo = {};
-      lineRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.lines = num(r.lines); });
-      variedRows.forEach((r) => { const o = byMo[r.mo] = byMo[r.mo] || { mo: r.mo, lines: 0, varied: 0, dollar: 0 }; o.varied = num(r.varied); o.dollar = num(r.dollar); });
-      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, dollarVariance: Math.round(o.dollar), accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
-      const totLines = monthly.reduce((n, o) => n + o.lines, 0), totVaried = monthly.reduce((n, o) => n + o.varied, 0), totDollar = monthly.reduce((n, o) => n + o.dollarVariance, 0);
-      const counts = num(evRows[0] && evRows[0].counts), withVar = num(evRows[0] && evRows[0].with_var);
       const iv = num(ivRows[0] && ivRows[0].val);
+      // Turns by class (uses current inventory value, not avg — per-class beginning balance
+      // isn't obtainable). null turns = dead stock (inventory but no 12mo COGS).
+      const invByCls = {}, cogsByCls = {};
+      invClassRows.forEach((r) => { invByCls[r.cls || "(unclassified)"] = num(r.v); });
+      cogsClassRows.forEach((r) => { cogsByCls[r.cls || "(unclassified)"] = num(r.v); });
+      const turnsByClass = Array.from(new Set([...Object.keys(invByCls), ...Object.keys(cogsByCls)])).map((cls) => {
+        const inv = invByCls[cls] || 0, cg = cogsByCls[cls] || 0; const tn = inv > 0 && cg > 0 ? +(cg / inv).toFixed(2) : null;
+        return { class: cls, cogs12mo: Math.round(cg), inventoryValue: Math.round(inv), turns: tn, daysOnHand: tn ? Math.round(365 / tn) : null };
+      }).filter((x) => x.inventoryValue > 0 || x.cogs12mo > 0).sort((a, b) => b.cogs12mo - a.cogs12mo);
+      // bin -> category. Department first (Warehouse* = control, *Production = scrap),
+      // WMS zone as fallback; no bin or no signal = unclassified.
+      const binMap = {}; binRows.forEach((b) => { binMap[String(b.id)] = { dept: b.dept || "", zone: b.zone || "" }; });
+      const catOf = (binid) => {
+        if (binid == null) return "unclassified";
+        const b = binMap[String(binid)] || {};
+        const d = String(b.dept || "").toLowerCase();
+        if (d.indexOf("warehouse") >= 0) return "control";
+        if (d.indexOf("production") >= 0) return "scrap";
+        const z = String(b.zone || "").toLowerCase();
+        if (!z) return "unclassified";
+        if (/production|bottling|blend|prep|wip|\bqc\b/.test(z)) return "scrap";
+        if (/warehouse|rack|floor|dock|storage|cold|k59/.test(z)) return "control";
+        return "unclassified";
+      };
+      // 2% variance acceptance (tunable via ?tol=, 0..1): a counted bin-item is accurate
+      // when |adjustment| is within TOL of book (book = counted − adjustment). Small,
+      // within-tolerance discrepancies don't fail the line. Paired per (count,item,bin).
+      const TOL = (() => { const t = Number(req.query && req.query.tol); return (isFinite(t) && t >= 0 && t < 1) ? t : 0.02; })();
+      const rec = new Map(); // (count,item,bin) -> { cat, mo, cnt, adj }
+      lineRows.forEach((r) => {
+        if (r.binid == null) return;
+        const k = r.txn + "|" + r.item + "|" + r.binid;
+        const o = rec.get(k) || { cat: null, mo: null, cnt: null, adj: 0 };
+        if (r.ty === "COUNTQUANTITY") { o.cat = catOf(r.binid); o.mo = r.mo; o.cnt = num(r.qq); }
+        else { o.adj = num(r.qq); }
+        rec.set(k, o);
+      });
+      // Warehouse stock is discrete (a bobbin/case/bottle isn't partly used on the rack),
+      // so round counted + book to whole units before comparing — a decimal/UoM-conversion
+      // artifact can't fail a warehouse line. Production keeps fractional (liquid/ingredient
+      // consumption in lb/gal is genuinely fractional). Then apply the variance tolerance.
+      const isBad = (o) => {
+        let cnt = o.cnt, book = o.cnt - o.adj;
+        if (o.cat === "control") { cnt = Math.round(cnt); book = Math.round(book); }
+        const denom = Math.abs(book);
+        return denom === 0 ? Math.abs(cnt) > 0 : (Math.abs(cnt - book) / denom) > TOL;
+      };
+      const cats = { control: { c: 0, v: 0 }, scrap: { c: 0, v: 0 }, unclassified: { c: 0, v: 0 } };
+      const byMo = {}; // warehouse (control) monthly trend
+      rec.forEach((o) => {
+        if (o.cnt == null) return; // only counted bin-items are in the denominator
+        const bad = isBad(o) ? 1 : 0; cats[o.cat].c++; cats[o.cat].v += bad;
+        if (o.cat === "control") { const m = byMo[o.mo] = byMo[o.mo] || { mo: o.mo, lines: 0, varied: 0 }; m.lines++; m.varied += bad; }
+      });
+      const catOut = (k) => ({ countLines: k.c, variedLines: k.v, accuracyPct: k.c > 0 ? +(100 * (1 - k.v / k.c)).toFixed(1) : null });
+      const categories = { control: catOut(cats.control), scrap: catOut(cats.scrap), unclassified: catOut(cats.unclassified) };
+      const monthly = Object.values(byMo).map((o) => ({ mo: o.mo, lines: o.lines, varied: o.varied, accuracyPct: o.lines > 0 ? +(100 * (1 - o.varied / o.lines)).toFixed(1) : null })).sort((a, b) => a.mo < b.mo ? -1 : 1);
+      const totC = cats.control.c + cats.scrap.c + cats.unclassified.c, totV = cats.control.v + cats.scrap.v + cats.unclassified.v;
       res.status(200).json({
         dataset: "invaccuracy",
-        accuracyPct: totLines > 0 ? +(100 * (1 - totVaried / totLines)).toFixed(1) : null,       // headline: line-level IRA
-        eventAccuracyPct: counts > 0 ? +(100 * (1 - withVar / counts)).toFixed(1) : null,          // % of count events spot-on
-        countLines: totLines, variedLines: totVaried, counts, countsWithVariance: withVar,
-        dollarVariance: Math.round(totDollar), inventoryValue: Math.round(iv),
+        accuracyPct: totC > 0 ? +(100 * (1 - totV / totC)).toFixed(1) : null,   // all-zones blend (fallback label)
+        countLines: totC, variedLines: totV,
+        inventoryValue: Math.round(iv),
         cogs12mo: Math.round(cogs12mo), avgInventoryValue: Math.round(avgInv), beginningInventory: Math.round(begInv), endingInventory: Math.round(endInv),
-        turns, daysOnHand,
-        monthly,
-        note: "IRA = counted item-lines that matched ÷ item-lines counted (native Inventory Counts + their adjustments). Turns = trailing-12mo COGS ÷ average inventory value ((beginning+ending)/2 of the Inventory asset GL). Days on Hand = 365 ÷ turns.",
+        turns, daysOnHand, turnsByClass,   // turnsByClass: 12mo COGS / current inventory value, per item class
+        varianceTolerancePct: +(TOL * 100).toFixed(2),
+        categories,   // control = Warehouse IRA (headline); scrap = production waste; unclassified = no bin/dept
+        monthly,      // warehouse (control) monthly trend
+        note: `Inventory Accuracy = accurate counted (bin,item) lines / counted (bin,item) lines, paired per count; a line is accurate when its adjustment is within ${+(TOL * 100).toFixed(2)}% of book (?tol= to tune). control = Warehouse IRA (headline). scrap = production zones — a count variance there is continuous-manufacturing waste, reported separately, not accuracy. Turns = 12mo COGS / avg inventory.`,
       });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
+  // Count Audit — read-only diagnostic: raw counted-vs-book per (count,item,bin) line with
+  // the UoM each count was entered in, so we can see whether low IRA is real gaps or a
+  // unit problem (e.g., same item counted in Case some sessions, Each others). ?cat=control
+  // (default) | scrap | unclassified, ?limit=N (default 200), worst variance first.
+  if (ds === "countaudit") {
+    try {
+      const creds = getCreds();
+      const rows = await suiteql("SELECT tl.transaction AS txn, BUILTIN.DF(tl.item) AS item, tl.transactionlinetype AS ty, tl.quantity AS qq, BUILTIN.DF(tl.units) AS uom, TO_CHAR(t.trandate,'YYYY-MM-DD') AS d, (SELECT MIN(ia.bin) FROM inventoryassignment ia WHERE ia.transaction=tl.transaction AND ia.transactionline=tl.id) AS binid FROM transactionline tl JOIN transaction t ON t.id=tl.transaction WHERE t.type='InvCount' AND tl.transactionlinetype IN ('COUNTQUANTITY','ADJUSTEDQUANTITY') AND tl.item IS NOT NULL", creds, 1000, 12);
+      let binRows = [];
+      for (const col of ["custrecord_department", "custrecordname"]) { try { binRows = await suiteql(`SELECT id, BUILTIN.DF(${col}) AS dept, BUILTIN.DF(custrecord_wmsse_zone) AS zone FROM bin`, creds, 1000, 4); break; } catch (e) { /* try other field id */ } }
+      const binMap = {}; binRows.forEach((b) => { binMap[String(b.id)] = { dept: b.dept || "", zone: b.zone || "" }; });
+      const catOf = (binid) => { if (binid == null) return "unclassified"; const b = binMap[String(binid)] || {}; const dd = String(b.dept || "").toLowerCase(); if (dd.indexOf("warehouse") >= 0) return "control"; if (dd.indexOf("production") >= 0) return "scrap"; const z = String(b.zone || "").toLowerCase(); if (!z) return "unclassified"; if (/production|bottling|blend|prep|wip|\bqc\b/.test(z)) return "scrap"; if (/warehouse|rack|floor|dock|storage|cold|k59/.test(z)) return "control"; return "unclassified"; };
+      const rec = {};
+      rows.forEach((r) => { if (r.binid == null) return; const k = r.txn + "|" + r.item + "|" + r.binid; const o = rec[k] || (rec[k] = { item: r.item, uom: r.uom, d: r.d, zone: (binMap[String(r.binid)] || {}).zone, cat: catOf(r.binid), cnt: null, adj: 0 }); if (r.ty === "COUNTQUANTITY") { o.cnt = num(r.qq); o.uom = r.uom; } else { o.adj = num(r.qq); } });
+      const cat = String((req.query && req.query.cat) || "control");
+      const limit = Number(req.query && req.query.limit) || 200;
+      const list = Object.values(rec).filter((o) => o.cnt != null && o.cat === cat && num(o.adj) !== 0).map((o) => { const book = o.cnt - o.adj; const vp = book !== 0 ? +(100 * Math.abs(o.adj) / Math.abs(book)).toFixed(1) : null; return { item: o.item, uom: o.uom, counted: o.cnt, book: +book.toFixed(2), adjustment: o.adj, variancePct: vp, zone: o.zone, date: o.d }; }).sort((a, b) => (b.variancePct || 0) - (a.variancePct || 0));
+      const uomByItem = {}; list.forEach((l) => { (uomByItem[l.item] = uomByItem[l.item] || new Set()).add(l.uom); });
+      const mixedUnitItems = Object.keys(uomByItem).filter((k) => uomByItem[k].size > 1);
+      res.status(200).json({ dataset: "countaudit", category: cat, totalVariedLines: list.length, mixedUnitItems, lines: list.slice(0, limit), note: "Read-only audit of counted vs book by (count,item,bin). uom = unit the count was entered in. mixedUnitItems = items counted in more than one unit (likely miscounts). variancePct = |adjustment| / book." });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+    return;
+  }
+  // Item Audit — read-only forensic: item records + their NetSuite system notes (who/when/
+  // what/context) for a list of item names. ?items=A,B,C[&since=YYYY-MM-DD]. Used to trace
+  // unexpected item changes (e.g. a re-imported old item file) to the actor and import job.
+  if (ds === "itemaudit") {
+    try {
+      const creds = getCreds();
+      const raw = String((req.query && req.query.items) || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 60);
+      if (!raw.length) { res.status(400).json({ error: "pass ?items=NAME1,NAME2,…" }); return; }
+      const list = raw.map((s) => `'${s.replace(/'/g, "''")}'`).join(",");
+      const items = await suiteql(`SELECT id, itemid, itemtype, BUILTIN.DF(class) AS cls, isinactive, externalid, TO_CHAR(createddate,'YYYY-MM-DD') AS created, TO_CHAR(lastmodifieddate,'YYYY-MM-DD HH24:MI') AS modified FROM item WHERE itemid IN (${list})`, creds, 1000, 2);
+      const ids = items.map((i) => Number(i.id)).filter(isFinite);
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query && req.query.since || "")) ? String(req.query.since) : null;
+      let notes = [];
+      if (ids.length) {
+        const dr = since ? ` AND sn.date >= TO_DATE('${since}','YYYY-MM-DD')` : "";
+        notes = await suiteql(`SELECT sn.recordid AS item_id, TO_CHAR(sn.date,'YYYY-MM-DD HH24:MI') AS d, sn.name AS user_id, sn.context, BUILTIN.DF(sn.field) AS field, sn.oldvalue, sn.newvalue FROM systemnote sn WHERE sn.recordtypeid = -10 AND sn.recordid IN (${ids.join(",")})${dr} ORDER BY sn.date DESC`, creds, 1000, 12);
+      }
+      const uids = [...new Set(notes.map((n) => Number(n.user_id)).filter(isFinite))];
+      const users = uids.length ? await suiteql(`SELECT id, entityid, email FROM employee WHERE id IN (${uids.join(",")})`, creds, 1000, 2).catch(() => []) : [];
+      res.status(200).json({ dataset: "itemaudit", items, noteCount: notes.length, notes: notes.slice(0, 2000), users });
     } catch (e) { res.status(502).json({ error: e.message }); }
     return;
   }
